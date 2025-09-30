@@ -309,6 +309,7 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.39.0"
+source = "git+https://github.com/0gfoundation/alloy-evm?rev=18f2ea11364184516157e22745fa71d1e24d5fcc#18f2ea11364184516157e22745fa71d1e24d5fcc"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -11108,6 +11109,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "43.0.3"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -11125,6 +11127,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "43.0.0"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "bitvec",
  "paste",
@@ -11136,6 +11139,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "43.0.3"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -11151,6 +11155,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "43.0.2"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -11165,6 +11170,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "43.0.1"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "alloy-eips",
  "derive_more",
@@ -11179,6 +11185,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "43.0.1"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "auto_impl",
  "either",
@@ -11191,6 +11198,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "43.0.3"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -11208,6 +11216,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "43.0.3"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "auto_impl",
  "either",
@@ -11247,6 +11256,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "43.0.2"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -11258,6 +11268,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "43.0.3"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -11289,6 +11300,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "43.0.0"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "alloy-primitives",
  "once_cell",
@@ -11298,6 +11310,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "43.0.1"
+source = "git+https://github.com/0gfoundation/revm?rev=6726ca5c26a46f9493c628518cb9b9e11f13613d#6726ca5c26a46f9493c628518cb9b9e11f13613d"
 dependencies = [
  "alloy-eip7928",
  "bitflags 2.13.2",
