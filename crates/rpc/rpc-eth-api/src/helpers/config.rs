@@ -180,7 +180,11 @@ fn evm_to_precompiles_map(
     precompiles
         .addresses()
         .filter_map(|address| {
-            Some((precompiles.get(address)?.precompile_id().name().to_string(), *address))
+            // reth-v2.8.1 migration: the original renamed `get` to `get_stateless` in
+            // `precompile_to_str(precompiles.get(address)?.precompile_id())`; upstream since
+            // replaced `precompile_to_str` with `.name().to_string()`, so only the rename is
+            // applied to the current line.
+            Some((precompiles.get_stateless(address)?.precompile_id().name().to_string(), *address))
         })
         .collect()
 }
