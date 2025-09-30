@@ -282,7 +282,10 @@ pub fn apply_precompile_overrides(
 
     for (source, dest) in &moves {
         if source == dest {
-            if precompiles.get(source).is_none() {
+            // reth-v2.8.1 migration: this code is new upstream after reth 1.8.1; the 0G
+            // alloy-evm fork renames `PrecompilesMap::get` to `get_stateless`, so the call is
+            // renamed the same way this commit renamed the one in `helpers/config.rs`.
+            if precompiles.get_stateless(source).is_none() {
                 return Err(EthSimulateError::NotAPrecompile(*source))
             }
             return Err(EthSimulateError::MovePrecompileToSelf(*source))
@@ -677,8 +680,10 @@ mod tests {
 
         apply_precompile_overrides(&state_overrides, &mut precompiles).unwrap();
 
-        assert!(precompiles.get(&source).is_none());
-        assert!(precompiles.get(&dest).is_some());
+        // reth-v2.8.1 migration: test new upstream after reth 1.8.1; `get` renamed to
+        // `get_stateless` as above.
+        assert!(precompiles.get_stateless(&source).is_none());
+        assert!(precompiles.get_stateless(&dest).is_some());
     }
 
     #[test]

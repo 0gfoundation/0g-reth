@@ -670,3 +670,41 @@ vergen-git2 = "10.0.1"
 
 # networking
 ipnet = "2.11"
+
+[patch.crates-io]
+# reth-v2.8.1 migration: the original pinned revm `71cbb675` (revm merge PR #2, same tree as
+# `c29ad165`) and alloy-evm `f427b5f3` (alloy-evm merge PR #3, same tree as `b2c2f9c`). Their
+# replays are revm `6726ca5c` and alloy-evm `18f2ea11`. The original listed the 11 revm crates
+# reth 1.8.1 resolved, including `op-revm`; reth v2.8.1 resolves 12 revm crates (adds
+# `revm-handler` and `revm-precompile`, which carry the 0G stateful precompile code) and no
+# `op-revm`, so all 12 are listed and `op-revm` is dropped, keeping a single source for every
+# revm crate.
+revm = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-database-interface" }
+revm-handler = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-handler" }
+revm-precompile = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-precompile" }
+
+alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "18f2ea11364184516157e22745fa71d1e24d5fcc" }
+
+# revm = { path = "../revm/crates/revm" }
+# revm-bytecode = { path = "../revm/crates/bytecode" }
+# revm-database = { path = "../revm/crates/database" }
+# revm-state = { path = "../revm/crates/state" }
+# revm-primitives = { path = "../revm/crates/primitives" }
+# revm-interpreter = { path = "../revm/crates/interpreter" }
+# revm-inspector = { path = "../revm/crates/inspector" }
+# revm-context = { path = "../revm/crates/context" }
+# revm-context-interface = { path = "../revm/crates/context/interface" }
+# revm-database-interface = { path = "../revm/crates/database/interface" }
+# revm-handler = { path = "../revm/crates/handler" }
+# revm-precompile = { path = "../revm/crates/precompile" }
+
+# alloy-evm = { path = "../alloy-evm/crates/evm" }
