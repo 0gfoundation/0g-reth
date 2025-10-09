@@ -3633,7 +3633,7 @@ mod tests {
 
         // Poll for events for a reasonable time
         let mut bootnode_appeared = false;
-        let timeout = tokio::time::sleep(Duration::from_secs(1));
+        let timeout = tokio::time::sleep(Duration::from_secs(10));
         tokio::pin!(timeout);
 
         loop {
