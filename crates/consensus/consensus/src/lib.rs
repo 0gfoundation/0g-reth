@@ -41,7 +41,7 @@ pub trait FullConsensus<N: NodePrimitives>: Consensus<N::Block> {
     /// Note: validating blocks does not include other validations of the Consensus
     fn validate_block_post_execution(
         &self,
-        block: &RecoveredBlock<N::Block>,
+        block: &mut RecoveredBlock<N::Block>,
         result: &BlockExecutionResult<N::Receipt>,
     ) -> Result<(), ConsensusError>;
 }

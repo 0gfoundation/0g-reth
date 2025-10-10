@@ -12,7 +12,7 @@ use crate::tree::{
     ConsistentDbView, EngineApiMetrics, EngineApiTreeState, ExecutionEnv, PayloadHandle,
     PersistenceState, PersistingKind, StateProviderBuilder, StateProviderDatabase, TreeConfig,
 };
-use alloy_consensus::transaction::Either;
+use alloy_consensus::{transaction::Either, BlockHeaderMut};
 use alloy_eips::{eip1898::BlockWithParent, NumHash};
 use alloy_evm::Evm;
 use alloy_primitives::B256;
@@ -32,7 +32,7 @@ use reth_payload_primitives::{
     BuiltPayload, InvalidPayloadAttributesError, NewPayloadError, PayloadTypes,
 };
 use reth_primitives_traits::{
-    AlloyBlockHeader, BlockTy, GotExpected, NodePrimitives, RecoveredBlock, SealedHeader,
+    AlloyBlockHeader, BlockTy, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader
 };
 use reth_provider::{
     BlockExecutionOutput, BlockHashReader, BlockNumReader, BlockReader, DBProvider,
@@ -498,7 +498,7 @@ where
         // after executing the block we can stop executing transactions
         handle.stop_prewarming_execution();
 
-        let block = self.convert_to_block(input)?;
+        let mut block = self.convert_to_block(input)?;
 
         // A helper macro that returns the block in case there was an error
         macro_rules! ensure_ok {
@@ -523,7 +523,7 @@ where
             return Err(InsertBlockError::new(block.into_sealed_block(), e.into()).into())
         }
 
-        if let Err(err) = self.consensus.validate_block_post_execution(&block, &output) {
+        if let Err(err) = self.consensus.validate_block_post_execution(&mut block, &output) {
             // call post-block hook
             self.on_invalid_block(&parent_block, &block, &output, None, ctx.state_mut());
             return Err(InsertBlockError::new(block.into_sealed_block(), err.into()).into())
@@ -623,23 +623,11 @@ where
 
         // ensure state root matches
         if state_root != block.header().state_root() {
-            // call post-block hook
-            self.on_invalid_block(
-                &parent_block,
-                &block,
-                &output,
-                Some((&trie_output, state_root)),
-                ctx.state_mut(),
-            );
-            let block_state_root = block.header().state_root();
-            return Err(InsertBlockError::new(
-                block.into_sealed_block(),
-                ConsensusError::BodyStateRootDiff(
-                    GotExpected { got: state_root, expected: block_state_root }.into(),
-                )
-                .into(),
-            )
-            .into())
+            // update the `state_root` field and replace `block` with the updated one.
+            let mut header = block.header().clone();
+            header.set_state_root(state_root);
+            let sealed_block = SealedBlock::seal_parts(header, block.body().clone());
+            block = RecoveredBlock::new_sealed(sealed_block, block.senders().to_vec());
         }
 
         // terminate prewarming task with good state output

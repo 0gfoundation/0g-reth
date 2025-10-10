@@ -323,7 +323,7 @@ where
             let fetch_block_start = Instant::now();
 
             // we need the block's transactions but we don't need the transaction hashes
-            let block = provider
+            let mut block = provider
                 .recovered_block(block_number.into(), TransactionVariant::NoHash)?
                 .ok_or_else(|| ProviderError::HeaderNotFound(block_number.into()))?;
 
@@ -344,7 +344,7 @@ where
                 })
             })?;
 
-            if let Err(err) = self.consensus.validate_block_post_execution(&block, &result) {
+            if let Err(err) = self.consensus.validate_block_post_execution(&mut block, &result) {
                 return Err(StageError::Block {
                     block: Box::new(block.block_with_parent()),
                     error: BlockErrorKind::Validation(err),

@@ -123,7 +123,7 @@ where
     /// Validates the given block and a [`BidTrace`] against it.
     pub async fn validate_message_against_block(
         &self,
-        block: RecoveredBlock<<E::Primitives as NodePrimitives>::Block>,
+        mut block: RecoveredBlock<<E::Primitives as NodePrimitives>::Block>,
         message: BidTrace,
         registered_gas_limit: u64,
     ) -> Result<(), ValidationApiError> {
@@ -201,7 +201,7 @@ where
         // update the cached reads
         self.update_cached_reads(parent_header_hash, request_cache).await;
 
-        self.consensus.validate_block_post_execution(&block, &output)?;
+        self.consensus.validate_block_post_execution(&mut block, &output)?;
 
         self.ensure_payment(&block, &output, &message)?;
 

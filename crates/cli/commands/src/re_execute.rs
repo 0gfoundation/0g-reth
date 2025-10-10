@@ -100,13 +100,13 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
             tasks.spawn_blocking(move || {
                 let mut executor = evm_config.batch_executor(db_at(start_block - 1));
                 for block in start_block..end_block {
-                    let block = provider_factory
+                    let mut block = provider_factory
                         .recovered_block(block.into(), TransactionVariant::NoHash)?
                         .unwrap();
                     let result = executor.execute_one(&block)?;
 
                     if let Err(err) = consensus
-                        .validate_block_post_execution(&block, &result)
+                        .validate_block_post_execution(&mut block, &result)
                         .wrap_err_with(|| format!("Failed to validate block {}", block.number()))
                     {
                         let correct_receipts =

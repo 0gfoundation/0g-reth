@@ -27,6 +27,7 @@ pub trait BlockHeader:
     + alloy_rlp::Encodable
     + alloy_rlp::Decodable
     + alloy_consensus::BlockHeader
+    + alloy_consensus::BlockHeaderMut
     + Sealable
     + InMemorySize
     + MaybeSerde

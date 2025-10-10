@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
-use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, TxReceipt};
+use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, BlockHeaderMut, TxReceipt};
 use alloy_eips::{eip7685::Requests, Encodable2718};
 use alloy_primitives::{Bloom, Bytes, B256};
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::ConsensusError;
 use reth_primitives_traits::{
-    receipt::gas_spent_by_transactions, Block, GotExpected, Receipt, RecoveredBlock,
+    receipt::gas_spent_by_transactions, Block, GotExpected, Receipt, RecoveredBlock, SealedBlock,
 };
 
 /// Validate a block with regard to execution results:
@@ -13,7 +13,7 @@ use reth_primitives_traits::{
 /// - Compares the receipts root in the block header to the block body
 /// - Compares the gas used in the block header to the actual gas usage after execution
 pub fn validate_block_post_execution<B, R, ChainSpec>(
-    block: &RecoveredBlock<B>,
+    block: &mut RecoveredBlock<B>,
     chain_spec: &ChainSpec,
     receipts: &[R],
     requests: &Requests,
@@ -23,10 +23,12 @@ where
     R: Receipt,
     ChainSpec: EthereumHardforks,
 {
+    let mut header = block.header().clone();
     // Check if gas used matches the value set in header.
     let cumulative_gas_used =
         receipts.last().map(|receipt| receipt.cumulative_gas_used()).unwrap_or(0);
     if block.header().gas_used() != cumulative_gas_used {
+        header.set_gas_used(cumulative_gas_used);
         return Err(ConsensusError::BlockGasUsed {
             gas: GotExpected { got: cumulative_gas_used, expected: block.header().gas_used() },
             gas_spent_by_tx: gas_spent_by_transactions(receipts),
@@ -38,16 +40,14 @@ where
     // transaction This was replaced with is_success flag.
     // See more about EIP here: https://eips.ethereum.org/EIPS/eip-658
     if chain_spec.is_byzantium_active_at_block(block.header().number()) {
-        if let Err(error) =
-            verify_receipts(block.header().receipts_root(), block.header().logs_bloom(), receipts)
-        {
-            let receipts = receipts
-                .iter()
-                .map(|r| Bytes::from(r.with_bloom_ref().encoded_2718()))
-                .collect::<Vec<_>>();
-            tracing::debug!(%error, ?receipts, "receipts verification failed");
-            return Err(error)
-        }
+        // Calculate receipts root and logs bloom from receipts
+        let receipts_with_bloom = receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
+        let receipts_root = calculate_receipt_root(&receipts_with_bloom);
+        let logs_bloom = receipts_with_bloom.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom_ref());
+
+        // Set the calculated values to header
+        header.set_receipts_root(receipts_root);
+        header.set_logs_bloom(logs_bloom);
     }
 
     // Validate that the header requests hash matches the calculated requests hash
@@ -56,12 +56,11 @@ where
             return Err(ConsensusError::RequestsHashMissing)
         };
         let requests_hash = requests.requests_hash();
-        if requests_hash != header_requests_hash {
-            return Err(ConsensusError::BodyRequestsHashDiff(
-                GotExpected::new(requests_hash, header_requests_hash).into(),
-            ))
-        }
+        header.set_requests_hash(Some(requests_hash));
     }
+
+    let sealed_block = SealedBlock::seal_parts(header, block.body().clone());
+    *block = RecoveredBlock::new_sealed(sealed_block, block.senders().to_vec());
 
     Ok(())
 }

@@ -62,7 +62,7 @@ where
 {
     fn validate_block_post_execution(
         &self,
-        block: &RecoveredBlock<N::Block>,
+        block: &mut RecoveredBlock<N::Block>,
         result: &BlockExecutionResult<N::Receipt>,
     ) -> Result<(), ConsensusError> {
         validate_block_post_execution(block.header(), &self.chain_spec, &result.receipts)

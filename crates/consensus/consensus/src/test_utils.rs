@@ -49,7 +49,7 @@ impl TestConsensus {
 impl<N: NodePrimitives> FullConsensus<N> for TestConsensus {
     fn validate_block_post_execution(
         &self,
-        _block: &RecoveredBlock<N::Block>,
+        _block: &mut RecoveredBlock<N::Block>,
         _result: &BlockExecutionResult<N::Receipt>,
     ) -> Result<(), ConsensusError> {
         if self.fail_validation() {

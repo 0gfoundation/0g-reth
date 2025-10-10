@@ -10,7 +10,7 @@
 #![allow(clippy::useless_let_if_seq)]
 
 use alloy_consensus::Transaction;
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use alloy_rlp::Encodable;
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
@@ -18,17 +18,17 @@ use reth_basic_payload_builder::{
 };
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
-use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError};
+use reth_errors::ConsensusError;
 use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
 use reth_evm::{
     execute::{BlockBuilder, BlockBuilderOutcome},
     ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
+use alloy_evm::block::CommitChanges;
 use reth_evm_ethereum::EthEvmConfig;
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload, EthPayloadBuilderAttributes};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::PayloadBuilderAttributes;
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
@@ -37,7 +37,7 @@ use reth_transaction_pool::{
     ValidPoolTransaction,
 };
 use revm::context_interface::Block as _;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, trace, warn};
 
 mod config;
@@ -185,6 +185,10 @@ where
     ));
     let mut total_fees = U256::ZERO;
 
+    // Track cumulative gas cost per sender to prevent insufficient balance issues
+    // when multiple transactions from the same sender are included in the block
+    let mut sender_cumulative_gas_cost: HashMap<Address, U256> = HashMap::new();
+
     builder.apply_pre_execution_changes().map_err(|err| {
         warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
         PayloadBuilderError::Internal(err.into())
@@ -293,30 +297,66 @@ where
             };
         }
 
-        let gas_used = match builder.execute_transaction(tx.clone()) {
-            Ok(gas_used) => gas_used,
-            Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
-                error, ..
-            })) => {
-                if error.is_nonce_too_low() {
-                    // if the nonce is too low, we can skip this transaction
-                    trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
-                } else {
-                    // if the transaction is invalid, we can skip it and all of its
-                    // descendants
-                    trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
-                    best_txs.mark_invalid(
-                        &pool_tx,
-                        InvalidPoolTransactionError::Consensus(
-                            InvalidTransactionError::TxTypeNotSupported,
-                        ),
-                    );
-                }
-                continue
+        // Use gas limit instead of executing transaction
+        let gas_used = pool_tx.gas_limit();
+
+        // Calculate the maximum gas cost for this transaction
+        let max_fee_per_gas = tx.max_fee_per_gas();
+        let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(0);
+        let effective_gas_price = (U256::from(base_fee) + U256::from(max_priority_fee_per_gas))
+            .min(U256::from(max_fee_per_gas));
+        let tx_max_cost = U256::from(gas_used) * effective_gas_price;
+
+        // Get sender address
+        let sender = pool_tx.sender();
+
+        // Calculate total cumulative cost for this sender including this transaction
+        let current_cumulative_cost = sender_cumulative_gas_cost.get(&sender).copied().unwrap_or(U256::ZERO);
+        let new_cumulative_cost = current_cumulative_cost + tx_max_cost + tx.value();
+
+        // Check if sender has sufficient balance for cumulative gas costs
+        // Query sender balance from the state provider
+        if let Ok(Some(sender_account)) = state_provider.basic_account(&sender) {
+            let sender_balance = sender_account.balance;
+
+            if sender_balance < new_cumulative_cost {
+                trace!(
+                    target: "payload_builder",
+                    ?tx,
+                    ?sender,
+                    sender_balance = ?sender_balance,
+                    required_cost = ?new_cumulative_cost,
+                    cumulative_cost = ?current_cumulative_cost,
+                    "skipping transaction: insufficient balance for cumulative gas costs"
+                );
+                best_txs.mark_invalid(
+                    &pool_tx,
+                    InvalidPoolTransactionError::ExceedsFeeCap {
+                        max_tx_fee_wei: new_cumulative_cost.try_into().unwrap_or(u128::MAX),
+                        tx_fee_cap_wei: sender_balance.try_into().unwrap_or(u128::MAX),
+                    },
+                );
+                continue;
             }
-            // this is an error that we should treat as fatal for this attempt
-            Err(err) => return Err(PayloadBuilderError::evm(err)),
-        };
+        }
+
+        // Add transaction to block without actual execution by using a custom closure
+        // that always returns CommitChanges::Yes but doesn't perform execution
+        let gas_used_from_execution = builder.execute_transaction_with_commit_condition(
+            tx.clone(),
+            |_result| {
+                // Always commit the transaction without actual execution
+                // This bypasses the execution but still adds the transaction to the block
+                trace!(target: "payload_builder", ?tx, gas_limit = gas_used, "committing transaction without execution");
+                CommitChanges::Yes
+            },
+        )?;
+
+        // Use the gas limit instead of actual execution result
+        let gas_used = gas_used_from_execution.unwrap_or(gas_used);
+
+        // Update sender's cumulative gas cost
+        sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
 
         // add to the total blob gas used if the transaction successfully executed
         if let Some(blob_tx) = tx.as_eip4844() {

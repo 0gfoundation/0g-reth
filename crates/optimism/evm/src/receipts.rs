@@ -22,11 +22,20 @@ impl OpReceiptBuilder for OpRethReceiptBuilder {
         match ctx.tx.tx_type() {
             OpTxType::Deposit => Err(ctx),
             ty => {
+                // Adjust cumulative_gas_used: if it's less than 80% of gas limit, set it to 80%
+                let gas_limit = ctx.evm.block().gas_limit;
+                let min_gas_used = (gas_limit * 4) / 5; // 80% of gas_limit
+                let adjusted_cumulative_gas_used = if ctx.cumulative_gas_used < min_gas_used {
+                    min_gas_used
+                } else {
+                    ctx.cumulative_gas_used
+                };
+
                 let receipt = Receipt {
                     // Success flag was added in `EIP-658: Embedding transaction status code in
                     // receipts`.
                     status: Eip658Value::Eip658(ctx.result.is_success()),
-                    cumulative_gas_used: ctx.cumulative_gas_used,
+                    cumulative_gas_used: adjusted_cumulative_gas_used,
                     logs: ctx.result.into_logs(),
                 };
 

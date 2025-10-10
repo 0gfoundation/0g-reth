@@ -48,7 +48,7 @@ impl<B: Block> Consensus<B> for NoopConsensus {
 impl<N: NodePrimitives> FullConsensus<N> for NoopConsensus {
     fn validate_block_post_execution(
         &self,
-        _block: &RecoveredBlock<N::Block>,
+        _block: &mut RecoveredBlock<N::Block>,
         _result: &BlockExecutionResult<N::Receipt>,
     ) -> Result<(), ConsensusError> {
         Ok(())
