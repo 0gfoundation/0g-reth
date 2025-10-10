@@ -9,7 +9,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 use reth_basic_payload_builder::{
@@ -18,19 +18,19 @@ use reth_basic_payload_builder::{
 };
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
-use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError};
+use reth_errors::ConsensusError;
 use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
 use reth_evm::{
     block::TxResult,
     execute::{BlockBuilder, BlockBuilderOutcome},
     ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
+use alloy_evm::block::{CommitChanges, GasOutput};
 use reth_evm_ethereum::EthEvmConfig;
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::PayloadAttributes;
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::{EvmStateProvider, StateProvider, StateProviderFactory};
 use reth_transaction_pool::{
@@ -39,7 +39,7 @@ use reth_transaction_pool::{
     ValidPoolTransaction,
 };
 use revm::context_interface::{Block as _, Cfg as _};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, trace, warn};
 
 mod config;
@@ -232,6 +232,10 @@ where
         builder.evm_mut().db_mut().set_state_hook(Some(Box::new(task.take_state_hook())));
     }
 
+    // Track cumulative gas cost per sender to prevent insufficient balance issues
+    // when multiple transactions from the same sender are included in the block
+    let mut sender_cumulative_gas_cost: HashMap<Address, U256> = HashMap::new();
+
     builder.apply_pre_execution_changes().map_err(|err| {
         warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
         PayloadBuilderError::Internal(err.into())
@@ -372,53 +376,77 @@ where
         }
 
         let miner_fee = tx.effective_tip_per_gas(base_fee);
-        let tx_hash = *tx.tx_hash();
 
-        let mut tx_regular_gas_used = 0;
-        let gas_output = match builder.execute_transaction_with_result_closure(tx, |result| {
-            tx_regular_gas_used = result.result().result.gas().block_regular_gas_used();
-        }) {
-            Ok(gas_output) => gas_output,
-            Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
-                error, ..
-            })) => {
-                if error.is_nonce_too_low() {
-                    // if the nonce is too low, we can skip this transaction
-                    trace!(target: "payload_builder", %error, ?tx_hash, "skipping nonce too low transaction");
-                } else {
-                    // if the transaction is invalid, we can skip it and all of its
-                    // descendants
-                    trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction and its descendants");
-                    best_txs.mark_invalid(
-                        &pool_tx,
-                        InvalidPoolTransactionError::Consensus(
-                            InvalidTransactionError::TxTypeNotSupported,
-                        ),
-                    );
-                }
-                continue
-            }
-            // The executor is the source of truth for block gas availability. Keep this
-            // non-fatal in case local builder accounting diverges from executor rules.
-            Err(BlockExecutionError::Validation(
-                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
-                    transaction_gas_limit,
-                    block_available_gas,
-                },
-            )) => {
-                trace!(target: "payload_builder", %transaction_gas_limit, %block_available_gas, ?tx_hash, "skipping transaction exceeding block gas limit");
+        // Use gas limit instead of executing transaction
+        let gas_used = pool_tx.gas_limit();
+
+        // Calculate the maximum gas cost for this transaction
+        let max_fee_per_gas = tx.max_fee_per_gas();
+        let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(0);
+        let effective_gas_price = (U256::from(base_fee) + U256::from(max_priority_fee_per_gas))
+            .min(U256::from(max_fee_per_gas));
+        let tx_max_cost = U256::from(gas_used) * effective_gas_price;
+
+        // Get sender address
+        let sender = pool_tx.sender();
+
+        // Calculate total cumulative cost for this sender including this transaction
+        let current_cumulative_cost = sender_cumulative_gas_cost.get(&sender).copied().unwrap_or(U256::ZERO);
+        let new_cumulative_cost = current_cumulative_cost + tx_max_cost + tx.value();
+
+        // Check if sender has sufficient balance for cumulative gas costs
+        // Query sender balance from the state provider
+        if let Ok(Some(sender_account)) = state_provider.basic_account(&sender) {
+            let sender_balance = sender_account.balance;
+
+            if sender_balance < new_cumulative_cost {
+                trace!(
+                    target: "payload_builder",
+                    ?tx,
+                    ?sender,
+                    sender_balance = ?sender_balance,
+                    required_cost = ?new_cumulative_cost,
+                    cumulative_cost = ?current_cumulative_cost,
+                    "skipping transaction: insufficient balance for cumulative gas costs"
+                );
                 best_txs.mark_invalid(
                     &pool_tx,
-                    InvalidPoolTransactionError::ExceedsGasLimit(
-                        transaction_gas_limit,
-                        block_available_gas,
-                    ),
+                    InvalidPoolTransactionError::ExceedsFeeCap {
+                        max_tx_fee_wei: new_cumulative_cost.try_into().unwrap_or(u128::MAX),
+                        tx_fee_cap_wei: sender_balance.try_into().unwrap_or(u128::MAX),
+                    },
                 );
-                continue
+                continue;
             }
-            // this is an error that we should treat as fatal for this attempt
-            Err(err) => return Err(PayloadBuilderError::evm(err)),
-        };
+        }
+
+        // Add transaction to block without actual execution by using a custom closure
+        // that always returns CommitChanges::Yes but doesn't perform execution
+        // reth-v2.8.1 migration: the original closure only traced and returned
+        // `CommitChanges::Yes`. Upstream's execution call (which this replaces, together with
+        // its per-error `match`; as in the original every error is returned through `?`) also
+        // recorded the transaction's regular gas for the Amsterdam (EIP-8037) block accounting
+        // below, so that line is kept in the closure.
+        let mut tx_regular_gas_used = 0;
+        let gas_used_from_execution = builder.execute_transaction_with_commit_condition(
+            tx.clone(),
+            |result| {
+                tx_regular_gas_used = result.result().result.gas().block_regular_gas_used();
+                // Always commit the transaction without actual execution
+                // This bypasses the execution but still adds the transaction to the block
+                trace!(target: "payload_builder", ?tx, gas_limit = gas_used, "committing transaction without execution");
+                CommitChanges::Yes
+            },
+        )?;
+
+        // Use the gas limit instead of actual execution result
+        // reth-v2.8.1 migration: the call now returns `Option<GasOutput>` instead of
+        // `Option<u64>`; the fallback wraps the gas limit the same way, and upstream's code below
+        // reads the transaction gas from `gas_output`.
+        let gas_output = gas_used_from_execution.unwrap_or(GasOutput::new(gas_used));
+
+        // Update sender's cumulative gas cost
+        sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
 
         // add to the total blob gas used if the transaction successfully executed
         if let Some(blob_count) = tx_blob_count {

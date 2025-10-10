@@ -1,12 +1,12 @@
 use alloc::vec::Vec;
-use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, TxReceipt};
+use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, BlockHeaderMut, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bloom, Bytes, B256};
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    receipt::gas_spent_by_transactions, Block, GotExpected, Receipt, RecoveredBlock,
+    receipt::gas_spent_by_transactions, Block, GotExpected, Receipt, RecoveredBlock, SealedBlock,
 };
 
 /// Validate a block with regard to execution results:
@@ -18,7 +18,7 @@ use reth_primitives_traits::{
 /// If `receipt_root_bloom` is provided, the pre-computed receipt root and logs bloom are used
 /// instead of computing them from the receipts.
 pub fn validate_block_post_execution<B, R, ChainSpec>(
-    block: &RecoveredBlock<B>,
+    block: &mut RecoveredBlock<B>,
     chain_spec: &ChainSpec,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
@@ -40,8 +40,11 @@ where
 }
 
 /// Validate a block with regard to execution results, optionally allowing pre-Amsterdam BAL hashes.
+// reth-v2.8.1 migration: upstream moved the body of `validate_block_post_execution` into this
+// function, so the 0G change of `block` to `&mut` (the block is re-sealed with the computed
+// header values below) is applied here too.
 pub(crate) fn validate_block_post_execution_with_bal_hashes<B, R, ChainSpec>(
-    block: &RecoveredBlock<B>,
+    block: &mut RecoveredBlock<B>,
     chain_spec: &ChainSpec,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
@@ -53,10 +56,20 @@ where
     R: Receipt,
     ChainSpec: EthereumHardforks,
 {
+    let mut header = block.header().clone();
     // Check if gas used matches the value set in header.
-    if block.header().gas_used() != result.gas_used {
+    // reth-v2.8.1 migration: the original compared the header with the last receipt's
+    // `cumulative_gas_used` and wrote that value into `header` before returning the error.
+    // Upstream now compares with `result.gas_used` (since EIP-8037 the block gas is no longer the
+    // receipts' cumulative gas). This commit's receipt builder raises the receipts' cumulative
+    // gas to 80% of the block gas limit, so the two differ here; the receipts' value is kept so
+    // the comparison and the value written are the ones the original used.
+    let cumulative_gas_used =
+        result.receipts.last().map(|receipt| receipt.cumulative_gas_used()).unwrap_or(0);
+    if block.header().gas_used() != cumulative_gas_used {
+        header.set_gas_used(cumulative_gas_used);
         return Err(ConsensusError::BlockGasUsed {
-            gas: GotExpected { got: result.gas_used, expected: block.header().gas_used() },
+            gas: GotExpected { got: cumulative_gas_used, expected: block.header().gas_used() },
             gas_spent_by_tx: gas_spent_by_transactions(&result.receipts),
         })
     }
@@ -66,30 +79,25 @@ where
     // transaction This was replaced with is_success flag.
     // See more about EIP here: https://eips.ethereum.org/EIPS/eip-658
     if chain_spec.is_byzantium_active_at_block(block.header().number()) {
-        let res = if let Some((receipts_root, logs_bloom)) = receipt_root_bloom {
-            compare_receipts_root_and_logs_bloom(
-                receipts_root,
-                logs_bloom,
-                block.header().receipts_root(),
-                block.header().logs_bloom(),
-            )
+        // reth-v2.8.1 migration: upstream can pass a `receipt_root_bloom` already computed from
+        // the same receipts (the engine computes it in a background task); the original only
+        // computed it here. Use the pre-computed value when given, otherwise compute it as the
+        // original did; either way the values are written to `header` instead of compared.
+        let (receipts_root, logs_bloom) = if let Some(root_bloom) = receipt_root_bloom {
+            root_bloom
         } else {
-            verify_receipts(
-                block.header().receipts_root(),
-                block.header().logs_bloom(),
-                &result.receipts,
-            )
+            // Calculate receipts root and logs bloom from receipts
+            let receipts_with_bloom =
+                result.receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
+            let receipts_root = calculate_receipt_root(&receipts_with_bloom);
+            let logs_bloom =
+                receipts_with_bloom.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom_ref());
+            (receipts_root, logs_bloom)
         };
 
-        if let Err(error) = res {
-            let receipts = result
-                .receipts
-                .iter()
-                .map(|r| Bytes::from(r.with_bloom_ref().encoded_2718()))
-                .collect::<Vec<_>>();
-            tracing::debug!(%error, ?receipts, "receipts verification failed");
-            return Err(error)
-        }
+        // Set the calculated values to header
+        header.set_receipts_root(receipts_root);
+        header.set_logs_bloom(logs_bloom);
     }
 
     // Validate that the header requests hash matches the calculated requests hash
@@ -98,11 +106,7 @@ where
             return Err(ConsensusError::RequestsHashMissing)
         };
         let requests_hash = result.requests.requests_hash();
-        if requests_hash != header_requests_hash {
-            return Err(ConsensusError::BodyRequestsHashDiff(
-                GotExpected::new(requests_hash, header_requests_hash).into(),
-            ))
-        }
+        header.set_requests_hash(Some(requests_hash));
     }
 
     // Validate that the header block access list hash matches the calculated block access list hash
@@ -125,6 +129,9 @@ where
             ))
         }
     }
+
+    let sealed_block = SealedBlock::seal_parts(header, block.body().clone());
+    *block = RecoveredBlock::new_sealed(sealed_block, block.senders().to_vec());
 
     Ok(())
 }

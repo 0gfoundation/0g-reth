@@ -191,7 +191,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                             break;
                         }
 
-                        let block = provider_factory
+                        let mut block = provider_factory
                             .recovered_block(block.into(), TransactionVariant::NoHash)?
                             .ok_or_else(|| eyre::eyre!("block {block} not found in the database"))?;
 
@@ -214,7 +214,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                             .map(|bal| Bal::from(bal).compute_hash_with_buf(&mut bal_buf));
 
                         if let Err(err) = consensus
-                            .validate_block_post_execution(&block, &result, None, bal_hash)
+                            .validate_block_post_execution(&mut block, &result, None, bal_hash)
                             .wrap_err_with(|| {
                                 format!(
                                     "Failed to validate block {} {}",

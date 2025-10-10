@@ -337,7 +337,7 @@ where
             let fetch_block_start = Instant::now();
 
             // we need the block's transactions but we don't need the transaction hashes
-            let block = provider
+            let mut block = provider
                 .recovered_block(block_number.into(), TransactionVariant::NoHash)?
                 .ok_or_else(|| ProviderError::HeaderNotFound(block_number.into()))?;
 
@@ -370,7 +370,7 @@ where
             let bal_hash = built_bal.as_ref().map(|bal| bal.compute_hash_with_buf(&mut bal_buf));
 
             if let Err(err) =
-                self.consensus.validate_block_post_execution(&block, &result, None, bal_hash)
+                self.consensus.validate_block_post_execution(&mut block, &result, None, bal_hash)
             {
                 return Err(StageError::Block {
                     block: Box::new(block.block_with_parent()),

@@ -694,6 +694,54 @@ revm-precompile = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5
 
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "18f2ea11364184516157e22745fa71d1e24d5fcc" }
 
+# Patch alloy 1.0.35 with 0g-alloy
+# reth-v2.8.1 migration: the original pinned 0g-alloy `bf33bea7`, replayed on alloy v2.5.0 as
+# `51c29264`. It listed the 27 alloy crates reth 1.8.1 resolved; reth v2.8.1 resolves 31 crates
+# of the 0g-alloy workspace (adds `alloy-consensus-any`, `alloy-node-bindings`,
+# `alloy-rpc-types-any` and `alloy-tx-macros`), so all 31 are listed to keep a single source for
+# every alloy crate.
+alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-consensus-any = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-contract = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-eips = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-genesis = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-json-rpc = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-network = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-network-primitives = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-node-bindings = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-provider = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-pubsub = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-client = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-admin = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-anvil = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-any = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-beacon = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-debug = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-engine = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-eth = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-mev = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-trace = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-rpc-types-txpool = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-serde = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-signer = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-signer-local = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-transport = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-transport-http = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-transport-ipc = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-transport-ws = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+alloy-tx-macros = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "51c292644e771d817b4fd926e5865a4607f479cc" }
+
+# reth-v2.8.1 migration: the original changed `crates/primitives-traits` in this repository
+# (`BlockHeader` gains the `BlockHeaderMut` supertrait). reth v2.8.1 takes that crate from
+# reth-core; the change is replayed there as `354d5434`, so the 5 reth-core crates reth v2.8.1
+# resolves are patched to it.
+reth-codecs = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
+reth-codecs-derive = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
+reth-primitives-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
+reth-rpc-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
+reth-zstd-compressors = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
+
 # revm = { path = "../revm/crates/revm" }
 # revm-bytecode = { path = "../revm/crates/bytecode" }
 # revm-database = { path = "../revm/crates/database" }

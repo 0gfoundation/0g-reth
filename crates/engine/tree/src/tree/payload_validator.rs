@@ -111,7 +111,7 @@ use crate::tree::{
     CacheWaitDurations, CachedStateProvider, EngineApiMetrics, EngineApiTreeState, ExecutionEnv,
     PayloadHandle, StateProviderDatabase, TreeConfig, WaitForCaches,
 };
-use alloy_consensus::{transaction::Either, Transaction as _, TxReceipt as _};
+use alloy_consensus::{transaction::Either, BlockHeaderMut, Transaction as _, TxReceipt as _};
 use alloy_eip7928::{
     bal::{Bal, DecodedBal},
     BlockAccessList,
@@ -154,8 +154,8 @@ use reth_payload_primitives::{
     PayloadTypes,
 };
 use reth_primitives_traits::{
-    AlloyBlockHeader, BlockBody, BlockTy, FastInstant as Instant, GotExpected, NodePrimitives,
-    RecoveredBlock, SealedBlock, SealedHeader, SignerRecoverable, TxTy,
+    AlloyBlockHeader, BlockBody, BlockTy, FastInstant as Instant, NodePrimitives, RecoveredBlock,
+    SealedBlock, SealedHeader, SignerRecoverable, TxTy,
 };
 use reth_provider::{
     BlockExecutionOutput, BlockReader, ChangeSetReader, DatabaseProviderFactory,
@@ -784,7 +784,11 @@ where
             });
 
         let block = validated_block.try_into_inner().expect("sole handle")?;
-        let block = block.with_senders(senders);
+        // reth-v2.8.1 migration: the original made `block` mutable where it was created
+        // (`let mut block = self.convert_to_block(input)?`); upstream now builds the recovered
+        // block here, so it is made mutable here. Post-execution validation and the state root
+        // check below replace it with a re-sealed block.
+        let mut block = block.with_senders(senders);
 
         // Wait for the receipt root computation to complete.
         let receipt_root_bloom = {
@@ -807,7 +811,7 @@ where
 
         ensure_ok_post_block!(
             self.validate_post_execution(
-                &block,
+                &mut block,
                 &parent_block,
                 &output,
                 &mut ctx,
@@ -889,23 +893,11 @@ where
 
         // ensure state root matches
         if state_root != block.header().state_root() {
-            // call post-block hook
-            self.on_invalid_block(
-                &parent_block,
-                &block,
-                &output,
-                Some((&trie_output, state_root)),
-                ctx.state_mut(),
-            );
-            let block_state_root = block.header().state_root();
-            return Err(InsertBlockError::new(
-                block.into_sealed_block(),
-                ConsensusError::BodyStateRootDiff(
-                    GotExpected { got: state_root, expected: block_state_root }.into(),
-                )
-                .into(),
-            )
-            .into())
+            // update the `state_root` field and replace `block` with the updated one.
+            let mut header = block.header().clone();
+            header.set_state_root(state_root);
+            let sealed_block = SealedBlock::seal_parts(header, block.body().clone());
+            block = RecoveredBlock::new_sealed(sealed_block, block.senders().to_vec());
         }
 
         let timing_stats = state_provider_stats.filter(|_| slow_block_enabled).map(|stats| {
@@ -1419,9 +1411,11 @@ where
     ///
     /// The `hashed_state` handle wraps the background hashed post state computation.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
+    // reth-v2.8.1 migration: upstream moved the `validate_block_post_execution` call into this
+    // helper; the original passed `&mut block` to it directly, so `block` becomes `&mut` here.
     fn validate_post_execution<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
         &mut self,
-        block: &RecoveredBlock<N::Block>,
+        block: &mut RecoveredBlock<N::Block>,
         parent_block: &SealedHeader<N::BlockHeader>,
         output: &BlockExecutionOutput<N::Receipt>,
         ctx: &mut TreeCtx<'_, N>,
