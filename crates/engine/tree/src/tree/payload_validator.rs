@@ -104,7 +104,10 @@ use crate::tree::{
     CacheWaitDurations, CachedStateProvider, EngineApiMetrics, EngineApiTreeState, ExecutionEnv,
     PayloadHandle, StateProviderBuilder, StateProviderDatabase, TreeConfig, WaitForCaches,
 };
-use alloy_consensus::transaction::{Either, TxHashRef};
+use alloy_consensus::{
+    transaction::{Either, TxHashRef},
+    BlockHeaderMut,
+};
 use alloy_eip7928::{bal::DecodedBal, compute_block_access_list_hash, BlockAccessList};
 use alloy_eips::{eip1898::BlockWithParent, eip4895::Withdrawal, NumHash};
 use alloy_evm::Evm;
@@ -142,7 +145,7 @@ use reth_payload_primitives::{
     PayloadTypes,
 };
 use reth_primitives_traits::{
-    AlloyBlockHeader, BlockBody, BlockTy, FastInstant as Instant, GotExpected, NodePrimitives,
+    AlloyBlockHeader, BlockBody, BlockTy, FastInstant as Instant, NodePrimitives,
     RecoveredBlock, SealedBlock, SealedHeader, SignerRecoverable,
 };
 use reth_provider::{
@@ -748,7 +751,7 @@ where
             });
 
         let block = validated_block.try_into_inner().expect("sole handle")?;
-        let block = block.with_senders(senders);
+        let mut block = block.with_senders(senders);
 
         // Wait for the receipt root computation to complete.
         let receipt_root_bloom = {
@@ -771,7 +774,7 @@ where
 
         ensure_ok_post_block!(
             self.validate_post_execution(
-                &block,
+                &mut block,
                 &parent_block,
                 &output,
                 &mut ctx,
@@ -844,23 +847,11 @@ where
 
         // ensure state root matches
         if state_root != block.header().state_root() {
-            // call post-block hook
-            self.on_invalid_block(
-                &parent_block,
-                &block,
-                &output,
-                Some((&trie_output, state_root)),
-                ctx.state_mut(),
-            );
-            let block_state_root = block.header().state_root();
-            return Err(InsertBlockError::new(
-                block.into_sealed_block(),
-                ConsensusError::BodyStateRootDiff(
-                    GotExpected { got: state_root, expected: block_state_root }.into(),
-                )
-                .into(),
-            )
-            .into())
+            // update the `state_root` field and replace `block` with the updated one.
+            let mut header = block.header().clone();
+            header.set_state_root(state_root);
+            let sealed_block = SealedBlock::seal_parts(header, block.body().clone());
+            block = RecoveredBlock::new_sealed(sealed_block, block.senders().to_vec());
         }
 
         let timing_stats = state_provider_stats.filter(|_| slow_block_enabled).map(|stats| {
@@ -1292,7 +1283,7 @@ where
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
     fn validate_post_execution<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
         &self,
-        block: &RecoveredBlock<N::Block>,
+        block: &mut RecoveredBlock<N::Block>,
         parent_block: &SealedHeader<N::BlockHeader>,
         output: &BlockExecutionOutput<N::Receipt>,
         ctx: &mut TreeCtx<'_, N>,

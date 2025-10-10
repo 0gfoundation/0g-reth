@@ -50,7 +50,7 @@ impl TestConsensus {
 impl<N: NodePrimitives> FullConsensus<N> for TestConsensus {
     fn validate_block_post_execution(
         &self,
-        _block: &RecoveredBlock<N::Block>,
+        _block: &mut RecoveredBlock<N::Block>,
         _result: &BlockExecutionResult<N::Receipt>,
         _receipt_root_bloom: Option<ReceiptRootBloom>,
         _block_access_list_hash: Option<B256>,

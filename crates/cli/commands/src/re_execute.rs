@@ -149,7 +149,6 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                 let evm_config = evm_config.with_jit_support();
                 let executor_lifetime = Duration::from_secs(600);
                 let provider = provider_factory.database_provider_ro()?.disable_long_read_transaction_safety();
-
                 let db_at = {
                     |block_number: u64| {
                         StateProviderDatabase(
@@ -181,7 +180,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                             break;
                         }
 
-                        let block = provider_factory
+                        let mut block = provider_factory
                             .recovered_block(block.into(), TransactionVariant::NoHash)?
                             .unwrap();
 
@@ -200,7 +199,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                         };
 
                         if let Err(err) = consensus
-                            .validate_block_post_execution(&block, &result, None,None)
+                            .validate_block_post_execution(&mut block, &result, None, None)
                             .wrap_err_with(|| {
                                 format!(
                                     "Failed to validate block {} {}",

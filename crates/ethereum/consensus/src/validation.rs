@@ -1,12 +1,12 @@
 use alloc::vec::Vec;
-use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, TxReceipt};
+use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, BlockHeaderMut, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bloom, Bytes, B256};
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    receipt::gas_spent_by_transactions, Block, GotExpected, Receipt, RecoveredBlock,
+    receipt::gas_spent_by_transactions, Block, GotExpected, Receipt, RecoveredBlock, SealedBlock,
 };
 
 /// Validate a block with regard to execution results:
@@ -18,7 +18,7 @@ use reth_primitives_traits::{
 /// If `receipt_root_bloom` is provided, the pre-computed receipt root and logs bloom are used
 /// instead of computing them from the receipts.
 pub fn validate_block_post_execution<B, R, ChainSpec>(
-    block: &RecoveredBlock<B>,
+    block: &mut RecoveredBlock<B>,
     chain_spec: &ChainSpec,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
@@ -26,6 +26,7 @@ pub fn validate_block_post_execution<B, R, ChainSpec>(
 ) -> Result<(), ConsensusError>
 where
     B: Block,
+    B::Header: BlockHeaderMut,
     R: Receipt,
     ChainSpec: EthereumHardforks,
 {
@@ -41,7 +42,7 @@ where
 
 /// Validate a block with regard to execution results, optionally allowing pre-Amsterdam BAL hashes.
 pub(crate) fn validate_block_post_execution_with_bal_hashes<B, R, ChainSpec>(
-    block: &RecoveredBlock<B>,
+    block: &mut RecoveredBlock<B>,
     chain_spec: &ChainSpec,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
@@ -50,9 +51,11 @@ pub(crate) fn validate_block_post_execution_with_bal_hashes<B, R, ChainSpec>(
 ) -> Result<(), ConsensusError>
 where
     B: Block,
+    B::Header: BlockHeaderMut,
     R: Receipt,
     ChainSpec: EthereumHardforks,
 {
+    let mut header = block.header().clone();
     // Check if gas used matches the value set in header.
     if block.header().gas_used() != result.gas_used {
         return Err(ConsensusError::BlockGasUsed {
@@ -66,43 +69,28 @@ where
     // transaction This was replaced with is_success flag.
     // See more about EIP here: https://eips.ethereum.org/EIPS/eip-658
     if chain_spec.is_byzantium_active_at_block(block.header().number()) {
-        let res = if let Some((receipts_root, logs_bloom)) = receipt_root_bloom {
-            compare_receipts_root_and_logs_bloom(
-                receipts_root,
-                logs_bloom,
-                block.header().receipts_root(),
-                block.header().logs_bloom(),
-            )
+        let (receipts_root, logs_bloom) = if let Some(root_bloom) = receipt_root_bloom {
+            root_bloom
         } else {
-            verify_receipts(
-                block.header().receipts_root(),
-                block.header().logs_bloom(),
-                &result.receipts,
-            )
+            let receipts = result.receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
+            let receipts_root = calculate_receipt_root(&receipts);
+            let logs_bloom = receipts.iter().fold(Bloom::ZERO, |bloom, receipt| {
+                bloom | receipt.bloom_ref()
+            });
+            (receipts_root, logs_bloom)
         };
 
-        if let Err(error) = res {
-            let receipts = result
-                .receipts
-                .iter()
-                .map(|r| Bytes::from(r.with_bloom_ref().encoded_2718()))
-                .collect::<Vec<_>>();
-            tracing::debug!(%error, ?receipts, "receipts verification failed");
-            return Err(error)
-        }
+        header.set_receipts_root(receipts_root);
+        header.set_logs_bloom(logs_bloom);
     }
 
     // Validate that the header requests hash matches the calculated requests hash
     if chain_spec.is_prague_active_at_timestamp(block.header().timestamp()) {
-        let Some(header_requests_hash) = block.header().requests_hash() else {
+        let Some(_) = block.header().requests_hash() else {
             return Err(ConsensusError::RequestsHashMissing)
         };
         let requests_hash = result.requests.requests_hash();
-        if requests_hash != header_requests_hash {
-            return Err(ConsensusError::BodyRequestsHashDiff(
-                GotExpected::new(requests_hash, header_requests_hash).into(),
-            ))
-        }
+        header.set_requests_hash(Some(requests_hash));
     }
 
     // Validate that the header block access list hash matches the calculated block access list hash
@@ -121,6 +109,9 @@ where
             ))
         }
     }
+
+    let sealed_block = SealedBlock::seal_parts(header, block.body().clone());
+    *block = RecoveredBlock::new_sealed(sealed_block, block.senders().to_vec());
 
     Ok(())
 }

@@ -39,6 +39,7 @@ revm.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
+alloy-evm.workspace = true
 
 # misc
 tracing.workspace = true

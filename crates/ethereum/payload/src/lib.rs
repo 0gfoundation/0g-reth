@@ -9,7 +9,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_primitives::{Bytes, U256};
+use alloy_evm::block::CommitChanges;
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 use reth_basic_payload_builder::{
@@ -39,7 +40,7 @@ use reth_transaction_pool::{
     ValidPoolTransaction,
 };
 use revm::context_interface::{Block as _, Cfg as _};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, trace, warn};
 
 mod config;
@@ -226,6 +227,10 @@ where
         builder.evm_mut().db_mut().set_state_hook(Some(Box::new(task.take_state_hook())));
     }
 
+    // Track cumulative gas cost per sender to prevent insufficient balance issues
+    // when multiple transactions from the same sender are included in the block
+    let mut sender_cumulative_gas_cost: HashMap<Address, U256> = HashMap::new();
+
     builder.apply_pre_execution_changes().map_err(|err| {
         warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
         PayloadBuilderError::Internal(err.into())
@@ -368,11 +373,44 @@ where
         let miner_fee = tx.effective_tip_per_gas(base_fee);
         let tx_hash = *tx.tx_hash();
 
+        let gas_limit = pool_tx.gas_limit();
+        let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(0);
+        let effective_gas_price = (U256::from(base_fee) + U256::from(max_priority_fee_per_gas))
+            .min(U256::from(tx.max_fee_per_gas()));
+        let tx_max_cost = U256::from(gas_limit) * effective_gas_price;
+        let sender = pool_tx.sender();
+        let current_cumulative_cost =
+            sender_cumulative_gas_cost.get(&sender).copied().unwrap_or(U256::ZERO);
+        let new_cumulative_cost = current_cumulative_cost + tx_max_cost + tx.value();
+
+        if let Ok(Some(sender_account)) = state_provider.basic_account(&sender) &&
+            sender_account.balance < new_cumulative_cost
+        {
+            trace!(
+                target: "payload_builder",
+                ?tx_hash,
+                ?sender,
+                sender_balance = ?sender_account.balance,
+                required_cost = ?new_cumulative_cost,
+                cumulative_cost = ?current_cumulative_cost,
+                "skipping transaction: insufficient balance for cumulative gas costs"
+            );
+            best_txs.mark_invalid(
+                &pool_tx,
+                InvalidPoolTransactionError::ExceedsFeeCap {
+                    max_tx_fee_wei: new_cumulative_cost.try_into().unwrap_or(u128::MAX),
+                    tx_fee_cap_wei: sender_account.balance.try_into().unwrap_or(u128::MAX),
+                },
+            );
+            continue
+        }
+
         let mut tx_regular_gas_used = 0;
-        let gas_output = match builder.execute_transaction_with_result_closure(tx, |result| {
+        let gas_output = match builder.execute_transaction_with_commit_condition(tx, |result| {
             tx_regular_gas_used = result.result().result.gas().block_regular_gas_used();
+            CommitChanges::Yes
         }) {
-            Ok(gas_output) => gas_output,
+            Ok(gas_output) => gas_output.unwrap_or_default(),
             Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                 error, ..
             })) => {
@@ -413,6 +451,8 @@ where
             // this is an error that we should treat as fatal for this attempt
             Err(err) => return Err(PayloadBuilderError::evm(err)),
         };
+
+        sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
 
         // add to the total blob gas used if the transaction successfully executed
         if let Some(blob_count) = tx_blob_count {

@@ -115,7 +115,7 @@ where
 {
     fn validate_block_post_execution(
         &self,
-        block: &RecoveredBlock<N::Block>,
+        block: &mut RecoveredBlock<N::Block>,
         result: &BlockExecutionResult<N::Receipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
         block_access_list_hash: Option<B256>,
@@ -472,13 +472,13 @@ mod tests {
     fn prague_post_execution_allows_block_access_list_hash_before_amsterdam() {
         let chain_spec = Arc::new(ChainSpecBuilder::mainnet().prague_activated().build());
         let expected_hash = B256::repeat_byte(0x42);
-        let block = prague_recovered_block_with_bal_hash(expected_hash);
+        let mut block = prague_recovered_block_with_bal_hash(expected_hash);
         let result = BlockExecutionResult::<Receipt>::default();
         let consensus = EthBeaconConsensus::new(chain_spec).with_allow_bal_hashes(true);
 
         assert!(FullConsensus::<EthPrimitives>::validate_block_post_execution(
             &consensus,
-            &block,
+            &mut block,
             &result,
             None,
             Some(expected_hash),
@@ -486,14 +486,14 @@ mod tests {
         .is_ok());
 
         assert!(FullConsensus::<EthPrimitives>::validate_block_post_execution(
-            &consensus, &block, &result, None, None,
+            &consensus, &mut block, &result, None, None,
         )
         .is_ok());
 
         assert!(matches!(
             FullConsensus::<EthPrimitives>::validate_block_post_execution(
                 &consensus,
-                &block,
+                &mut block,
                 &result,
                 None,
                 Some(B256::repeat_byte(0x24)),
