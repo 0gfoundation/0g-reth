@@ -6,8 +6,8 @@ use crate::{
     tree::{error::InsertPayloadError, payload_validator::TreeCtx},
 };
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_eips::{eip1898::BlockWithParent, BlockNumHash, NumHash};
-use alloy_primitives::{map::B256Map, B256};
+use alloy_eips::{eip1898::BlockWithParent, BlockNumHash, NumHash, eip7685::Requests};
+use alloy_primitives::{map::B256Map, B256, Bytes};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
@@ -43,6 +43,10 @@ use reth_storage_overlay::OverlayManager;
 use reth_tasks::{spawn_os_thread, utils::increase_thread_priority};
 use reth_trie::{HashedPostState, KeccakKeyHasher, SortedTrieData};
 use revm::interpreter::debug_unreachable;
+// reth-v2.8.1 migration: the original added `use revm_primitives::hex;` (never used). reth v2.8.1
+// dropped engine-tree's direct `revm-primitives` dependency, so the same item is imported through
+// `revm`'s re-export instead of adding the dependency back.
+use revm::primitives::hex;
 use state::TreeState;
 use std::{
     fmt::Debug,
@@ -483,9 +487,13 @@ where
 
     /// Returns a [`TreeOutcome`] indicating the forkchoice head is valid and canonical.
     fn valid_outcome(state: ForkchoiceState) -> TreeOutcome<OnForkChoiceUpdated> {
+        // reth-v2.8.1 migration: 0b47d9ef1 passed `vec![]` as the new `execution_requests`
+        // argument in the `valid_outcome` closure of `on_forkchoice_updated`; upstream turned that
+        // closure into this function.
         TreeOutcome::new(OnForkChoiceUpdated::valid(PayloadStatus::new(
             PayloadStatusEnum::Valid,
             Some(state.head_block_hash),
+            vec![],
         )))
     }
 
@@ -825,11 +833,11 @@ where
         // `on_new_payload`. `latest_valid_hash` now comes from the inserted block's `head` (the
         // block may have been re-sealed under a new hash during validation) instead of the
         // payload's hash, so the `let block_hash = payload.block_hash();` that only fed it is
-        // removed. `execution_requests` is declared by the next commit (0b47d9ef1), as in the
-        // original history.
+        // removed. 0b47d9ef1 declared `execution_requests` and passed it to `PayloadStatus::new`.
         let num_hash = payload.num_hash();
         let parent_hash = payload.parent_hash();
         let mut latest_valid_hash = None;
+        let mut execution_requests = vec![];
 
         match self.insert_payload(payload) {
             Ok(status) => {
@@ -855,7 +863,7 @@ where
                 };
 
                 Ok(TryInsertPayloadResult {
-                    status: PayloadStatus::new(status, latest_valid_hash),
+                    status: PayloadStatus::new(status, latest_valid_hash, execution_requests),
                     already_seen,
                 })
             }
@@ -2476,6 +2484,21 @@ where
         }
     }
 
+    /// Return requests from in-memory state or database by hash.
+    fn requests_by_hash(
+        &self,
+        hash: B256,
+    ) -> ProviderResult<Option<Requests>> {
+        // check memory only
+        let requests = self.state.tree_state.execution_requests_by_hash(&hash);
+
+        if requests.is_some() {
+            Ok(requests)
+        } else {
+            Err(ProviderError::BlockHashNotFound(hash))
+        }
+    }
+
     /// Return the parent hash of the lowest buffered ancestor for the requested block, if there
     /// are any buffered ancestors. If there are no buffered ancestors, and the block itself does
     /// not exist in the buffer, this returns the hash that is passed in.
@@ -2737,7 +2760,7 @@ where
                 Ok(res) => {
                     debug!(target: "engine::tree", child =?child_num_hash, ?res, "connected buffered block");
                     if self.is_any_sync_target(child_num_hash.hash) &&
-                        matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid))
+                        matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid{ .. }))
                     {
                         debug!(target: "engine::tree", child =?child_num_hash, "connected sync target block");
                         // we just inserted a block that we know is part of the canonical chain, so
@@ -3110,7 +3133,7 @@ where
 
         // try to append the block
         match self.insert_block(block) {
-            Ok(InsertPayloadOk::Inserted(BlockStatus::Valid)) => {
+            Ok(InsertPayloadOk::Inserted(BlockStatus::Valid{ .. })) => {
                 return self.on_valid_downloaded_block(block_num_hash);
             }
             Ok(InsertPayloadOk::Inserted(BlockStatus::Disconnected { head, missing_ancestor })) => {
@@ -3439,6 +3462,7 @@ where
         Ok(PayloadStatus::new(
             PayloadStatusEnum::Invalid { validation_error: validation_err.to_string() },
             latest_valid_hash,
+            vec![],
         ))
     }
 
@@ -3463,7 +3487,7 @@ where
             };
 
         let status = PayloadStatusEnum::from(error);
-        Ok(PayloadStatus::new(status, latest_valid_hash))
+        Ok(PayloadStatus::new(status, latest_valid_hash, vec![]))
     }
 
     /// Attempts to find the header for the given block hash if it is canonical.
@@ -3702,7 +3726,7 @@ where
         //
         // if the payload is deemed VALID and the build process has begun.
         OnForkChoiceUpdated::updated_with_pending_payload_id(
-            PayloadStatus::new(PayloadStatusEnum::Valid, Some(state.head_block_hash)),
+            PayloadStatus::new(PayloadStatusEnum::Valid, Some(state.head_block_hash), vec![]),
             pending_payload_id,
         )
     }
@@ -3812,7 +3836,7 @@ impl Drop for PayloadBuildLease {
 ///
 /// If we don't know the block's parent, we return `Disconnected`, as we can't claim that the block
 /// is valid or not.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockStatus {
     /// The block is valid: its parent state was available, so it was executed and inserted into
     /// the tree.
@@ -3840,7 +3864,7 @@ pub enum BlockStatus {
 ///
 /// If the payload was valid, but has already been seen, [`InsertPayloadOk::AlreadySeen`] is
 /// returned, otherwise [`InsertPayloadOk::Inserted`] is returned.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InsertPayloadOk {
     /// The payload was valid, but we have already seen it.
     AlreadySeen(BlockStatus),

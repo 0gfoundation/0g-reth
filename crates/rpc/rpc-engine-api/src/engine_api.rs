@@ -37,7 +37,7 @@ use std::{
     time::{Instant, SystemTime},
 };
 use tokio::sync::oneshot;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace, warn, info};
 
 /// The Engine API response sender.
 pub type EngineApiSender<Ok> = oneshot::Sender<EngineApiResult<Ok>>;
@@ -248,7 +248,14 @@ where
             .validator
             .validate_version_specific_fields(EngineApiMessageVersion::V4, payload_or_attrs)?;
 
-        Ok(self.inner.beacon_consensus.new_payload(payload).await?)
+        // reth-v2.8.1 migration: 0b47d9ef1 bound the result to log it before returning. Upstream
+        // dropped the `.inspect(|_| self.inner.on_new_payload_response())` from this chain, so it
+        // is not added back.
+        let result = self.inner.beacon_consensus.new_payload(payload).await?;
+
+        info!("[Debug] EngineApi new_payload_v4, result={:?}", &result);
+
+        Ok(result)
     }
 
     /// Metrics version of `new_payload_v4`
