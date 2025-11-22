@@ -1,7 +1,7 @@
 //! Functionality related to tree state.
 
 use crate::engine::EngineApiKind;
-use alloy_eips::{eip1898::BlockWithParent, merge::EPOCH_SLOTS, BlockNumHash};
+use alloy_eips::{eip1898::BlockWithParent, merge::EPOCH_SLOTS, BlockNumHash, eip7685::Requests};
 use alloy_primitives::{
     map::{HashMap, HashSet},
     BlockNumber, B256,
@@ -91,6 +91,14 @@ impl<N: NodePrimitives> TreeState<N> {
         hash: &B256,
     ) -> Option<SealedHeader<N::BlockHeader>> {
         self.blocks_by_hash.get(hash).map(|b| b.sealed_block().sealed_header().clone())
+    }
+
+    /// Returns the execution requests by hash.
+    pub(crate) fn execution_requests_by_hash(
+        &self,
+        hash: &B256,
+    ) -> Option<Requests> {
+        self.blocks_by_hash.get(hash).map(|b| b.execution_outcome().requests.first().unwrap_or(&Requests::default()).clone())
     }
 
     /// Returns all available blocks for the given hash that lead back to the canonical chain, from

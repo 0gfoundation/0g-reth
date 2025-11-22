@@ -25,6 +25,7 @@ use revm::{
     context::result::ExecutionResult,
     database::{states::bundle_state::BundleRetention, BundleState, State},
 };
+use reth_tracing::tracing::info;
 
 /// A type that knows how to execute a block. It is assumed to operate on a
 /// [`crate::Evm`] internally and use [`State`] as database.
@@ -507,6 +508,8 @@ where
         })?;
 
         let block = RecoveredBlock::new_unhashed(block, senders);
+
+        info!("[Debug] BlockBuilder finish, block={:#?}", block);
 
         Ok(BlockBuilderOutcome { execution_result: result, hashed_state, trie_updates, block })
     }

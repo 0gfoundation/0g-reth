@@ -31,7 +31,7 @@ use reth_tasks::TaskSpawner;
 use reth_transaction_pool::TransactionPool;
 use std::{sync::Arc, time::Instant};
 use tokio::sync::oneshot;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace, warn, info};
 
 /// The Engine API response sender.
 pub type EngineApiSender<Ok> = oneshot::Sender<EngineApiResult<Ok>>;
@@ -256,12 +256,16 @@ where
             .validator
             .validate_version_specific_fields(EngineApiMessageVersion::V4, payload_or_attrs)?;
 
-        Ok(self
+        let result = self
             .inner
             .beacon_consensus
             .new_payload(payload)
             .await
-            .inspect(|_| self.inner.on_new_payload_response())?)
+            .inspect(|_| self.inner.on_new_payload_response())?;
+
+        info!("[Debug] EngineApi new_payload_v4, result={:?}", &result);
+
+        Ok(result)
     }
 
     /// Metrics version of `new_payload_v4`

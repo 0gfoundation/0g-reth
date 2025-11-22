@@ -6,9 +6,9 @@ use crate::{
     tree::{error::InsertPayloadError, metrics::EngineApiMetrics, payload_validator::TreeCtx},
 };
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_eips::{eip1898::BlockWithParent, merge::EPOCH_SLOTS, BlockNumHash, NumHash};
+use alloy_eips::{eip1898::BlockWithParent, merge::EPOCH_SLOTS, BlockNumHash, NumHash, eip7685::Requests};
 use alloy_evm::block::StateChangeSource;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
@@ -41,6 +41,7 @@ use reth_stages_api::ControlFlow;
 use reth_trie::{HashedPostState, TrieInput};
 use reth_trie_db::DatabaseHashedPostState;
 use revm::state::EvmState;
+use revm_primitives::hex;
 use state::TreeState;
 use std::{
     fmt::Debug,
@@ -572,6 +573,7 @@ where
 
         let status = if self.backfill_sync_state.is_idle() {
             let mut latest_valid_hash = None;
+            let mut execution_requests = vec![];
             match self.insert_payload(payload) {
                 Ok(status) => {
                     let status = match status {
@@ -593,7 +595,7 @@ where
                         }
                     };
 
-                    PayloadStatus::new(status, latest_valid_hash)
+                    PayloadStatus::new(status, latest_valid_hash, execution_requests)
                 }
                 Err(error) => match error {
                     InsertPayloadError::Block(error) => self.on_insert_block_error(error)?,
@@ -1015,6 +1017,7 @@ where
             TreeOutcome::new(OnForkChoiceUpdated::valid(PayloadStatus::new(
                 PayloadStatusEnum::Valid,
                 Some(head),
+                vec![],
             )))
         };
 
@@ -1748,6 +1751,21 @@ where
         }
     }
 
+    /// Return requests from in-memory state or database by hash.
+    fn requests_by_hash(
+        &self,
+        hash: B256,
+    ) -> ProviderResult<Option<Requests>> {
+        // check memory only
+        let requests = self.state.tree_state.execution_requests_by_hash(&hash);
+
+        if requests.is_some() {
+            Ok(requests)
+        } else {
+            Err(ProviderError::BlockHashNotFound(hash))
+        }
+    }
+
     /// Return the parent hash of the lowest buffered ancestor for the requested block, if there
     /// are any buffered ancestors. If there are no buffered ancestors, and the block itself does
     /// not exist in the buffer, this returns the hash that is passed in.
@@ -1914,7 +1932,7 @@ where
                 Ok(res) => {
                     debug!(target: "engine::tree", child =?child_num_hash, ?res, "connected buffered block");
                     if self.is_sync_target_head(child_num_hash.hash) &&
-                        matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid))
+                        matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid{ .. }))
                     {
                         self.make_canonical(child_num_hash.hash)?;
                     }
@@ -2238,7 +2256,7 @@ where
 
         // try to append the block
         match self.insert_block(block) {
-            Ok(InsertPayloadOk::Inserted(BlockStatus::Valid)) => {
+            Ok(InsertPayloadOk::Inserted(BlockStatus::Valid{ .. })) => {
                 if self.is_sync_target_head(block_num_hash.hash) {
                     trace!(target: "engine::tree", "appended downloaded sync target block");
 
@@ -2582,6 +2600,7 @@ where
         Ok(PayloadStatus::new(
             PayloadStatusEnum::Invalid { validation_error: validation_err.to_string() },
             latest_valid_hash,
+            vec![],
         ))
     }
 
@@ -2605,7 +2624,7 @@ where
             };
 
         let status = PayloadStatusEnum::from(error);
-        Ok(PayloadStatus::new(status, latest_valid_hash))
+        Ok(PayloadStatus::new(status, latest_valid_hash, vec![]))
     }
 
     /// Attempts to find the header for the given block hash if it is canonical.
@@ -2783,7 +2802,7 @@ where
                 //
                 // if the payload is deemed VALID and the build process has begun.
                 OnForkChoiceUpdated::updated_with_pending_payload_id(
-                    PayloadStatus::new(PayloadStatusEnum::Valid, Some(state.head_block_hash)),
+                    PayloadStatus::new(PayloadStatusEnum::Valid, Some(state.head_block_hash), vec![]),
                     pending_payload_id,
                 )
             }
@@ -2857,7 +2876,7 @@ where
 ///
 /// If we don't know the block's parent, we return `Disconnected`, as we can't claim that the block
 /// is valid or not.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockStatus {
     /// The block is valid and block extends canonical chain.
     Valid {
@@ -2879,7 +2898,7 @@ pub enum BlockStatus {
 ///
 /// If the payload was valid, but has already been seen, [`InsertPayloadOk::AlreadySeen`] is
 /// returned, otherwise [`InsertPayloadOk::Inserted`] is returned.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InsertPayloadOk {
     /// The payload was valid, but we have already seen it.
     AlreadySeen(BlockStatus),

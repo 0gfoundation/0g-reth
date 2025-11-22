@@ -726,36 +726,36 @@ revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "
 revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "71cbb675f562a6c1ac1fd4eda8618b8a921426b6", package = "revm-database-interface" }
 op-revm = { git = "https://github.com/0gfoundation/revm", rev = "71cbb675f562a6c1ac1fd4eda8618b8a921426b6", package = "op-revm" }
 
-alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "6b65ec867bac7d8cf623c165deef0eee3793b28a" }
+alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", branch = "mainnet-staking" }
 
 # Patch alloy 1.0.35 with 0g-alloy
-alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-contract = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-eips = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-genesis = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-json-rpc = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-network = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-network-primitives = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-provider = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-pubsub = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-client = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types-admin = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types-anvil = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types-beacon = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types-debug = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types-engine = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types-eth = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types-mev = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types-trace = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-rpc-types-txpool = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-serde = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-signer = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-signer-local = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-transport = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-transport-http = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-transport-ipc = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
-alloy-transport-ws = { git = "https://github.com/0gfoundation/0g-alloy.git", rev = "bf33bea75516c58e0488f34087377c2615ded4b7" }
+alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-consensus" }
+alloy-contract = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-contract" }
+alloy-eips = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-eips" }
+alloy-genesis = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-genesis" }
+alloy-json-rpc = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-json-rpc" }
+alloy-network = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-network" }
+alloy-network-primitives = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-network-primitives" }
+alloy-provider = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-provider", features = ["reqwest"] }
+alloy-pubsub = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-pubsub" }
+alloy-rpc-client = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-client" }
+alloy-rpc-types ={ git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types", features = ["eth"] }
+alloy-rpc-types-admin = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types-admin" }
+alloy-rpc-types-anvil = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types-anvil" }
+alloy-rpc-types-beacon = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types-beacon" }
+alloy-rpc-types-debug = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types-debug" }
+alloy-rpc-types-engine = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types-engine" }
+alloy-rpc-types-eth = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types-eth" }
+alloy-rpc-types-mev = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types-mev" }
+alloy-rpc-types-trace = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types-trace" }
+alloy-rpc-types-txpool = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-rpc-types-txpool" }
+alloy-serde = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-serde" }
+alloy-signer = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-signer" }
+alloy-signer-local = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-signer-local" }
+alloy-transport = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-transport" }
+alloy-transport-http = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-transport-http", features = ["reqwest-rustls-tls"] }
+alloy-transport-ipc = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-transport-ipc" }
+alloy-transport-ws = { git = "https://github.com/0gfoundation/0g-alloy", branch = "mainnet-staking", package = "alloy-transport-ws" }
 
 # revm = { path = "../revm/crates/revm" }
 # revm-bytecode = { path = "../revm/crates/bytecode" }
@@ -770,3 +770,31 @@ alloy-transport-ws = { git = "https://github.com/0gfoundation/0g-alloy.git", rev
 # op-revm = { path = "../revm/crates/op-revm" }
 
 # alloy-evm = { path = "../alloy-evm/crates/evm" }
+
+# alloy-consensus = { path = "../alloy/crates/consensus" }
+# alloy-contract = { path = "../alloy/crates/contract" }
+# alloy-eips = { path = "../alloy/crates/eips" }
+# alloy-genesis = { path = "../alloy/crates/genesis" }
+# alloy-json-rpc = { path = "../alloy/crates/json-rpc" }
+# alloy-network = { path = "../alloy/crates/network" }
+# alloy-network-primitives = { path = "../alloy/crates/network-primitives" }
+# alloy-provider = { path = "../alloy/crates/provider", features = ["reqwest"] }
+# alloy-pubsub = { path = "../alloy/crates/pubsub" }
+# alloy-rpc-client = { path = "../alloy/crates/rpc-client" }
+# alloy-rpc-types ={ path = "../alloy/crates/rpc-types", features = ["eth"] }
+# alloy-rpc-types-admin = { path = "../alloy/crates/rpc-types-admin" }
+# alloy-rpc-types-anvil = { path = "../alloy/crates/rpc-types-anvil" }
+# alloy-rpc-types-beacon = { path = "../alloy/crates/rpc-types-beacon" }
+# alloy-rpc-types-debug = { path = "../alloy/crates/rpc-types-debug" }
+# alloy-rpc-types-engine = { path = "../alloy/crates/rpc-types-engine" }
+# alloy-rpc-types-eth = { path = "../alloy/crates/rpc-types-eth" }
+# alloy-rpc-types-mev = { path = "../alloy/crates/rpc-types-mev" }
+# alloy-rpc-types-trace = { path = "../alloy/crates/rpc-types-trace" }
+# alloy-rpc-types-txpool = { path = "../alloy/crates/rpc-types-txpool" }
+# alloy-serde = { path = "../alloy/crates/serde" }
+# alloy-signer = { path = "../alloy/crates/signer" }
+# alloy-signer-local = { path = "../alloy/crates/signer-local" }
+# alloy-transport = { path = "../alloy/crates/transport" }
+# alloy-transport-http = { path = "../alloy/crates/transport-http", features = ["reqwest-rustls-tls"] }
+# alloy-transport-ipc = { path = "../alloy/crates/transport-ipc" }
+# alloy-transport-ws = { path = "../alloy/crates/transport-ws" }
