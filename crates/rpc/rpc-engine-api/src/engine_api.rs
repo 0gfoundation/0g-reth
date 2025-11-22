@@ -157,7 +157,9 @@ where
             .validator
             .validate_version_specific_fields(EngineApiMessageVersion::V1, payload_or_attrs)?;
 
-        Ok(self.inner.beacon_consensus.new_payload(payload).await?)
+        let result = self.inner.beacon_consensus.new_payload(payload).await?;
+        info!("[Debug] EngineApi new_payload_v4, result={:?}", &result);
+        Ok(result)
     }
 
     /// Metered version of `new_payload_v1`.
