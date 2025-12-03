@@ -24,11 +24,49 @@ where
     ChainSpec: EthereumHardforks,
 {
     let mut header = block.header().clone();
+
+    // Print each receipt during cumulative_gas_used calculation
+    tracing::info!(
+        target: "consensus::validation",
+        block_number = block.header().number(),
+        receipts_count = receipts.len(),
+        "Starting to process receipts for cumulative_gas_used calculation"
+    );
+
+    for (idx, receipt) in receipts.iter().enumerate() {
+        tracing::info!(
+            target: "consensus::validation",
+            block_number = block.header().number(),
+            receipt_index = idx,
+            cumulative_gas_used = receipt.cumulative_gas_used(),
+            success = receipt.status(),
+            "Receipt details during cumulative_gas_used calculation"
+        );
+    }
+
     // Check if gas used matches the value set in header.
     let cumulative_gas_used =
         receipts.last().map(|receipt| receipt.cumulative_gas_used()).unwrap_or(0);
+
+    tracing::info!(
+        target: "consensus::validation",
+        block_number = block.header().number(),
+        final_cumulative_gas_used = cumulative_gas_used,
+        header_gas_used = block.header().gas_used(),
+        "Final cumulative_gas_used calculation complete"
+    );
+
     if block.header().gas_used() != cumulative_gas_used {
         header.set_gas_used(cumulative_gas_used);
+        // Log gas usage mismatch detected in post-execution validation
+        tracing::error!(
+            target: "consensus::validation",
+            block_number = block.header().number(),
+            block_hash = ?block.hash(),
+            expected_gas = block.header().gas_used(),
+            actual_gas = cumulative_gas_used,
+            "BlockGasUsed error in validate_block_post_execution: gas used mismatch detected"
+        );
         return Err(ConsensusError::BlockGasUsed {
             gas: GotExpected { got: cumulative_gas_used, expected: block.header().gas_used() },
             gas_spent_by_tx: gas_spent_by_transactions(receipts),

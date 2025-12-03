@@ -298,7 +298,10 @@ where
         }
 
         // Use gas limit instead of executing transaction
-        let gas_used = pool_tx.gas_limit();
+        let gas_limit = pool_tx.gas_limit();
+        // Apply 80% minimum gas usage threshold
+        let min_gas_used = gas_limit * 80 / 100;
+        let gas_used = gas_limit.max(min_gas_used);
 
         // Calculate the maximum gas cost for this transaction
         let max_fee_per_gas = tx.max_fee_per_gas();
@@ -347,13 +350,14 @@ where
             |_result| {
                 // Always commit the transaction without actual execution
                 // This bypasses the execution but still adds the transaction to the block
-                trace!(target: "payload_builder", ?tx, gas_limit = gas_used, "committing transaction without execution");
+                trace!(target: "payload_builder", ?tx, gas_limit = gas_limit, "committing transaction without execution");
                 CommitChanges::Yes
             },
         )?;
 
-        // Use the gas limit instead of actual execution result
-        let gas_used = gas_used_from_execution.unwrap_or(gas_used);
+        // Use execution result or gas_limit, then apply 80% minimum threshold
+        let actual_gas_used = gas_used_from_execution.unwrap_or(gas_limit);
+        let gas_used = actual_gas_used.max(min_gas_used);
 
         // Update sender's cumulative gas cost
         sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
