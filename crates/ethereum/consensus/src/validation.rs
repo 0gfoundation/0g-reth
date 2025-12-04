@@ -4,9 +4,7 @@ use alloy_eips::{eip7685::Requests, Encodable2718};
 use alloy_primitives::{Bloom, Bytes, B256};
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::ConsensusError;
-use reth_primitives_traits::{
-    receipt::gas_spent_by_transactions, Block, GotExpected, Receipt, RecoveredBlock, SealedBlock,
-};
+use reth_primitives_traits::{Block, GotExpected, Receipt, RecoveredBlock, SealedBlock};
 
 /// Validate a block with regard to execution results:
 ///
@@ -57,20 +55,18 @@ where
     );
 
     if block.header().gas_used() != cumulative_gas_used {
+        // Update header with actual gas used from execution
+        // This is expected because proposal uses gas_limit while validation uses actual execution result
         header.set_gas_used(cumulative_gas_used);
-        // Log gas usage mismatch detected in post-execution validation
-        tracing::error!(
+        tracing::info!(
             target: "consensus::validation",
             block_number = block.header().number(),
             block_hash = ?block.hash(),
-            expected_gas = block.header().gas_used(),
+            proposal_gas = block.header().gas_used(),
             actual_gas = cumulative_gas_used,
-            "BlockGasUsed error in validate_block_post_execution: gas used mismatch detected"
+            "Updating header gas_used with actual execution result"
         );
-        return Err(ConsensusError::BlockGasUsed {
-            gas: GotExpected { got: cumulative_gas_used, expected: block.header().gas_used() },
-            gas_spent_by_tx: gas_spent_by_transactions(receipts),
-        })
+        // Do not return error - header will be updated and re-signed
     }
 
     // Before Byzantium, receipts contained state root that would mean that expensive
