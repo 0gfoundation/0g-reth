@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.21.1"
-source = "git+https://github.com/0gfoundation/alloy-evm?branch=mainnet-staking#817526162bf85571ff7749844af1dee62998af92"
+source = "git+https://github.com/0gfoundation/alloy-evm?branch=mainnet-staking#966158e1e645155bb97c5e680352f8cc090205d2"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",

@@ -577,15 +577,15 @@ where
             match self.insert_payload(payload) {
                 Ok(status) => {
                     let status = match status {
-                        InsertPayloadOk::Inserted(BlockStatus::Valid{ requests }) => {
+                        InsertPayloadOk::Inserted(BlockStatus::Valid{ head, requests }) => {
                             execution_requests = requests;
-                            latest_valid_hash = Some(block_hash);
+                            latest_valid_hash = Some(head.hash);
                             self.try_connect_buffered_blocks(num_hash)?;
                             PayloadStatusEnum::Valid
                         }
-                        InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ requests }) => {
+                        InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head, requests }) => {
                             execution_requests = requests;
-                            latest_valid_hash = Some(block_hash);
+                            latest_valid_hash = Some(head.hash);
                             PayloadStatusEnum::Valid
                         }
                         InsertPayloadOk::Inserted(BlockStatus::Disconnected { .. }) |
@@ -2341,7 +2341,7 @@ where
                 let block = convert_to_block(self, input)?;
                 return Err(InsertBlockError::new(block.into_sealed_block(), err.into()).into());
             }
-            Ok(Some(_)) => {
+            Ok(Some( header )) => {
                 // We now assume that we already have this block in the tree. However, we need to
                 // run the conversion to ensure that the block hash is valid.
                 convert_to_block(self, input)?;
@@ -2350,7 +2350,7 @@ where
                 let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
                 info!("[Debug] InsertPayloadOk AlreadySeen, requests={}", requests.len());
 
-                return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ requests }))
+                return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: header.num_hash(), requests }))
             }
             _ => {}
         };
@@ -2410,7 +2410,8 @@ where
         self.metrics.engine.executed_blocks.set(self.state.tree_state.block_count() as f64);
 
         let requests = executed.execution_output.requests.first().unwrap_or(&Requests::default()).clone().take();
-        info!("[Debug] InsertPayloadOk Inserted, requests={}", requests.len());
+        let head = executed.block.recovered_block.num_hash();
+        info!("[Debug] InsertPayloadOk Inserted, block={:?}, head={:?}, requests={}", &block_num_hash, &head, requests.len());
 
         // emit insert event
         let elapsed = start.elapsed();
@@ -2426,7 +2427,7 @@ where
             .block_insert_total_duration
             .record(block_insert_start.elapsed().as_secs_f64());
         debug!(target: "engine::tree", block=?block_num_hash, "Finished inserting block");
-        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid{requests}))
+        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid{ head, requests}))
     }
 
     /// Computes the trie input at the provided parent hash.
@@ -2879,6 +2880,8 @@ where
 pub enum BlockStatus {
     /// The block is valid and block extends canonical chain.
     Valid {
+        /// Current canonical head.
+        head: BlockNumHash,
         /// Execution requests.
         requests: Vec<Bytes>,
     },
