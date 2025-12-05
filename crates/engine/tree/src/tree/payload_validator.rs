@@ -661,6 +661,8 @@ where
             ExecutedTrieUpdates::Present(Arc::new(trie_output))
         };
 
+        info!("[Debug] Validate block with state, block={:?}, output={:?}, hashed_state={:?}", &block, &output, &hashed_state);
+
         Ok(ExecutedBlockWithTrieUpdates {
             block: ExecutedBlock {
                 recovered_block: Arc::new(block),
