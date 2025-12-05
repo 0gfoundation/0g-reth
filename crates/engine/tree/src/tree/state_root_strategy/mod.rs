@@ -892,7 +892,14 @@ where
             return Ok(PreparedStateRootJob::new(Box::new(SkippedStateRootJob {}), None))
         }
 
-        if !ctx.config.use_state_root_task() {
+        // reth-v2.8.1 migration: 81afd9cc2 ("set state root without state root task") added
+        // `use_state_root_task = false;` in `payload_validator.rs` right before the state root
+        // was computed, so the root never came from the state-root task, whatever the config
+        // said. Upstream moved that choice into this `prepare`, so the override is applied
+        // here; in v2.8.1 the non-task path is the synchronous job below. The original
+        // condition was `if !ctx.config.use_state_root_task()`.
+        let use_state_root_task = false;
+        if !use_state_root_task {
             return Ok(PreparedStateRootJob::new(
                 Box::new(SynchronousStateRootJob {
                     state_provider_factory: ctx.state_provider_factory,
@@ -1115,10 +1122,11 @@ where
             .with_hashed_state(Some(hashed_state)))
     }
 
-    /// Converts a task outcome into a job outcome, recomputing serially when the task returned
-    /// a root that does not match the block header. A state-root-task bug then costs latency
-    /// instead of marking a valid block invalid; if the serial root also mismatches, validation
-    /// rejects the block.
+    /// Converts a task outcome into a job outcome, publishing the sparse trie when the task root
+    /// matches the block header.
+    ///
+    /// reth-v2.8.1 migration: upstream recomputed serially when the task returned a root that
+    /// does not match the block header; 0G uses the task root as is (see the body).
     fn verified_sparse_outcome(
         &self,
         block: &RecoveredBlock<N::Block>,
@@ -1126,6 +1134,14 @@ where
         outcome: StateRootComputeOutcome,
     ) -> ProviderResult<StateRootJobOutcome> {
         let outcome = self.sparse_outcome(output, outcome);
+        // reth-v2.8.1 migration: 81afd9cc2 commented out the "double check the state root"
+        // comparison in `payload_validator.rs` and always used the task's root, even when it
+        // differs from the header (validation then writes the computed root into the header and
+        // re-seals the block). Upstream moved the comparison here; on a mismatch it warned
+        // ("State root task returned incorrect state root, recomputing serially") and returned
+        // `self.compute_serial(output)` instead of the task root. The comparison is kept only to
+        // decide whether to publish the sparse trie, as upstream does: on a mismatch the block is
+        // re-sealed under a new hash, so `block.hash()` would be the wrong anchor.
         if outcome.state_root == block.header().state_root() {
             publish_sparse_trie(
                 &self.pending_trie_rx,
@@ -1133,15 +1149,8 @@ where
                 block.hash(),
                 outcome.state_root,
             );
-            return Ok(outcome)
         }
-        warn!(
-            target: "engine::tree::state_root_strategy",
-            state_root = ?outcome.state_root,
-            block_state_root = ?block.header().state_root(),
-            "State root task returned incorrect state root, recomputing serially"
-        );
-        self.compute_serial(output)
+        Ok(outcome)
     }
 
     fn sparse_outcome(
@@ -1218,6 +1227,11 @@ where
         loop {
             if let Ok(Ok(outcome)) = task_rx.try_recv() {
                 let outcome = self.sparse_outcome(&output, outcome);
+                // reth-v2.8.1 migration: same as in `verified_sparse_outcome`, 81afd9cc2 used the
+                // task's root without comparing it to the header. Upstream returned the task root
+                // only when it matched; otherwise it warned ("State root task returned incorrect
+                // state root, using serial fallback") and fell through to the racing serial root.
+                // The comparison now only gates publishing the sparse trie.
                 if outcome.state_root == block.header().state_root() {
                     publish_sparse_trie(
                         &self.pending_trie_rx,
@@ -1225,15 +1239,8 @@ where
                         block.hash(),
                         outcome.state_root,
                     );
-                    return Ok(outcome)
                 }
-                // A wrong task root falls through to the serial fallback already racing below.
-                warn!(
-                    target: "engine::tree::state_root_strategy",
-                    state_root = ?outcome.state_root,
-                    block_state_root = ?block.header().state_root(),
-                    "State root task returned incorrect state root, using serial fallback"
-                );
+                return Ok(outcome)
             }
 
             match fallback_rx.try_recv() {
