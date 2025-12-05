@@ -821,7 +821,12 @@ where
         &mut self,
         payload: T::ExecutionData,
     ) -> Result<TryInsertPayloadResult, InsertBlockProcessingError> {
-        let block_hash = payload.block_hash();
+        // reth-v2.8.1 migration: c536004cf changed this match, which upstream moved here from
+        // `on_new_payload`. `latest_valid_hash` now comes from the inserted block's `head` (the
+        // block may have been re-sealed under a new hash during validation) instead of the
+        // payload's hash, so the `let block_hash = payload.block_hash();` that only fed it is
+        // removed. `execution_requests` is declared by the next commit (0b47d9ef1), as in the
+        // original history.
         let num_hash = payload.num_hash();
         let parent_hash = payload.parent_hash();
         let mut latest_valid_hash = None;
@@ -829,13 +834,15 @@ where
         match self.insert_payload(payload) {
             Ok(status) => {
                 let (status, already_seen) = match status {
-                    InsertPayloadOk::Inserted(BlockStatus::Valid) => {
-                        latest_valid_hash = Some(block_hash);
+                    InsertPayloadOk::Inserted(BlockStatus::Valid{ head, requests }) => {
+                        execution_requests = requests;
+                        latest_valid_hash = Some(head.hash);
                         self.try_connect_buffered_blocks(num_hash)?;
                         (PayloadStatusEnum::Valid, false)
                     }
-                    InsertPayloadOk::AlreadySeen(BlockStatus::Valid) => {
-                        latest_valid_hash = Some(block_hash);
+                    InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head, requests }) => {
+                        execution_requests = requests;
+                        latest_valid_hash = Some(head.hash);
                         (PayloadStatusEnum::Valid, true)
                     }
                     InsertPayloadOk::Inserted(BlockStatus::Disconnected { .. }) => {
@@ -3201,7 +3208,17 @@ where
         // Check if block already exists - first in memory, then DB only if it could be persisted
         if self.state.tree_state.contains_hash(&block_num_hash.hash) {
             convert_to_block(self, input)?;
-            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid));
+
+            // reth-v2.8.1 migration: c536004cf returned the known block's head and execution
+            // requests from its single `sealed_header_by_hash` lookup (memory first, then DB).
+            // Upstream split that lookup into this in-memory check and the DB check below, so the
+            // same code is applied to both. The header was looked up by this block's hash, so
+            // `header.num_hash()` is `block_num_hash` here.
+            // revert if return provider error
+            let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
+            info!("[Debug] InsertPayloadOk AlreadySeen, requests={}", requests.len());
+
+            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: block_num_hash, requests }));
         }
 
         // Only query DB if block could be persisted (number <= last persisted block).
@@ -3212,9 +3229,15 @@ where
                     let block = convert_to_block(self, input)?;
                     return Err(InsertBlockError::new(block.split().0, err.into()).into());
                 }
-                Ok(Some(_)) => {
+                // reth-v2.8.1 migration: c536004cf, see the in-memory check above.
+                Ok(Some( header )) => {
                     convert_to_block(self, input)?;
-                    return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid));
+
+                    // revert if return provider error
+                    let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
+                    info!("[Debug] InsertPayloadOk AlreadySeen, requests={}", requests.len());
+
+                    return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: header.num_hash(), requests }));
                 }
                 Ok(None) => {}
             }
@@ -3302,6 +3325,15 @@ where
 
         self.metrics.engine.executed_blocks.set(self.state.tree_state.block_count() as f64);
 
+        // reth-v2.8.1 migration: c536004cf read
+        // `executed.execution_output.requests.first().unwrap_or(&Requests::default()).clone().take()`
+        // and `executed.block.recovered_block.num_hash()`. Upstream's `ExecutedBlock` now holds
+        // this block's `BlockExecutionOutput` (one `Requests`, not a per-block list) and the
+        // recovered block directly.
+        let requests = executed.execution_output.requests.clone().take();
+        let head = executed.recovered_block.num_hash();
+        info!("[Debug] InsertPayloadOk Inserted, block={:?}, head={:?}, requests={}", &block_num_hash, &head, requests.len());
+
         // emit insert event
         let elapsed = start.elapsed();
         let engine_event = if is_fork {
@@ -3316,7 +3348,7 @@ where
             .block_insert_total_duration
             .record(block_insert_start.elapsed().as_secs_f64());
         debug!(target: "engine::tree", block=?block_num_hash, "Finished inserting block");
-        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid))
+        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid{ head, requests}))
     }
 
     /// Handles an error that occurred while inserting a block.
@@ -3787,7 +3819,14 @@ pub enum BlockStatus {
     ///
     /// Note: this does not imply the block extends the canonical chain. Blocks on a fork are
     /// executed and inserted the same way and report this status as well.
-    Valid,
+    // reth-v2.8.1 migration: c536004cf added the `head` and `requests` fields; the doc comment is
+    // upstream's rewritten one.
+    Valid {
+        /// Current canonical head.
+        head: BlockNumHash,
+        /// Execution requests.
+        requests: Vec<Bytes>,
+    },
     /// The block may be valid and has an unknown missing ancestor.
     Disconnected {
         /// Current canonical head.
