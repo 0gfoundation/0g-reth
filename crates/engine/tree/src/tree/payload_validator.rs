@@ -554,6 +554,7 @@ where
         if run_parallel_state_root {
             // if we new payload extends the current canonical change we attempt to use the
             // background task or try to compute it in parallel
+            use_state_root_task = false;
             if use_state_root_task {
                 debug!(target: "engine::tree", block=?block_num_hash, "Using sparse trie state root algorithm");
                 match handle.state_root() {
@@ -561,7 +562,6 @@ where
                         let elapsed = root_time.elapsed();
                         info!(target: "engine::tree", ?state_root, ?elapsed, "State root task finished");
                         
-                        // block.header().set_state_root(state_root);
                         maybe_state_root = Some((state_root, trie_updates, elapsed))
                         // we double check the state root here for good measure
                         // if state_root == block.header().state_root() {
