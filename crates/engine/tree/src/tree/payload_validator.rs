@@ -554,23 +554,26 @@ where
         if run_parallel_state_root {
             // if we new payload extends the current canonical change we attempt to use the
             // background task or try to compute it in parallel
+            use_state_root_task = false;
             if use_state_root_task {
                 debug!(target: "engine::tree", block=?block_num_hash, "Using sparse trie state root algorithm");
                 match handle.state_root() {
                     Ok(StateRootComputeOutcome { state_root, trie_updates }) => {
                         let elapsed = root_time.elapsed();
                         info!(target: "engine::tree", ?state_root, ?elapsed, "State root task finished");
+                        
+                        maybe_state_root = Some((state_root, trie_updates, elapsed))
                         // we double check the state root here for good measure
-                        if state_root == block.header().state_root() {
-                            maybe_state_root = Some((state_root, trie_updates, elapsed))
-                        } else {
-                            warn!(
-                                target: "engine::tree",
-                                ?state_root,
-                                block_state_root = ?block.header().state_root(),
-                                "State root task returned incorrect state root"
-                            );
-                        }
+                        // if state_root == block.header().state_root() {
+                        //     maybe_state_root = Some((state_root, trie_updates, elapsed))
+                        // } else {
+                        //     warn!(
+                        //         target: "engine::tree",
+                        //         ?state_root,
+                        //         block_state_root = ?block.header().state_root(),
+                        //         "State root task returned incorrect state root"
+                        //     );
+                        // }
                     }
                     Err(error) => {
                         debug!(target: "engine::tree", %error, "State root task failed");
