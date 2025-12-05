@@ -870,6 +870,8 @@ where
             let _ = valid_block_tx.send(());
         }
 
+        info!("[Debug] Validate block with state, block={:?}, output={:?}, hashed_state={:?}", &block, &output, &hashed_state);
+
         let executed_block = self.spawn_deferred_trie_task(
             Arc::new(block),
             output,
