@@ -692,7 +692,9 @@ revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = 
 revm-handler = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-handler" }
 revm-precompile = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-precompile" }
 
-alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "18f2ea11364184516157e22745fa71d1e24d5fcc" }
+# reth-v2.8.1 migration: the original pinned alloy-evm `6b65ec86` (update minimum gas used),
+# replayed as `6e150fa0`.
+alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "6e150fa0eac0651a545a0f8505e420cb72b819c2" }
 
 # Patch alloy 1.0.35 with 0g-alloy
 # reth-v2.8.1 migration: the original pinned 0g-alloy `bf33bea7`, replayed on alloy v2.5.0 as

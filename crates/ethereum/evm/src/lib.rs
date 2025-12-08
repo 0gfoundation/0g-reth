@@ -289,6 +289,11 @@ where
             result,
             blob_gas_used: tx.blob_gas_used().unwrap_or_default(),
             tx_type: tx.tx_type(),
+            // reth-v2.8.1 migration: this code is new upstream after reth 1.8.1. The alloy-evm
+            // fork this commit pins (`6b65ec86`, replayed as `6e150fa0`) carries the transaction
+            // gas limit in `EthTxResult` so that `commit_transaction` can apply the 80% minimum
+            // gas used; it is filled from the same transaction, as alloy-evm does when executing.
+            tx_gas_limit: tx.gas_limit(),
         })
     }
 
