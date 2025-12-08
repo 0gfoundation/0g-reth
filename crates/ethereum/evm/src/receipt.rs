@@ -2,7 +2,6 @@ use alloy_consensus::TxType;
 use alloy_evm::eth::receipt_builder::{ReceiptBuilder, ReceiptBuilderCtx};
 use reth_ethereum_primitives::{Receipt, TransactionSigned};
 use reth_evm::Evm;
-use revm::context_interface::Block as _;
 
 /// A builder that operates on Reth primitive types, specifically [`TransactionSigned`] and
 /// [`Receipt`].
@@ -15,23 +14,14 @@ impl ReceiptBuilder for RethReceiptBuilder {
     type Receipt = Receipt;
 
     fn build_receipt<E: Evm>(&self, ctx: ReceiptBuilderCtx<'_, TxType, E>) -> Self::Receipt {
-        let ReceiptBuilderCtx { tx_type, result, cumulative_gas_used, evm, .. } = ctx;
-
-        // Adjust cumulative_gas_used: if it's less than 80% of gas limit, set it to 80%
-        let gas_limit = evm.block().gas_limit();
-        let min_gas_used = (gas_limit * 4) / 5; // 80% of gas_limit
-        let adjusted_cumulative_gas_used = if cumulative_gas_used < min_gas_used {
-            min_gas_used
-        } else {
-            cumulative_gas_used
-        };
+        let ReceiptBuilderCtx { tx_type, result, cumulative_gas_used, .. } = ctx;
 
         Receipt {
             tx_type,
             // Success flag was added in `EIP-658: Embedding transaction status code in
             // receipts`.
             success: result.is_success(),
-            cumulative_gas_used: adjusted_cumulative_gas_used,
+            cumulative_gas_used,
             logs: result.into_logs(),
         }
     }

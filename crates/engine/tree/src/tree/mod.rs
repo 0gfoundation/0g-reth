@@ -5,7 +5,7 @@ use crate::{
     persistence::PersistenceHandle,
     tree::{error::InsertPayloadError, payload_validator::TreeCtx},
 };
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::{eip1898::BlockWithParent, merge::EPOCH_SLOTS, BlockNumHash, NumHash};
 use alloy_primitives::{map::B256Map, B256};
 use alloy_rpc_types_engine::{
@@ -25,8 +25,9 @@ use reth_errors::{ConsensusError, ProviderResult};
 use reth_evm::ConfigureEvm;
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle};
 use reth_payload_primitives::{BuiltPayload, NewPayloadError, PayloadAttributes, PayloadTypes};
+use reth_primitives_traits::transaction::TxHashRef;
 use reth_primitives_traits::{
-    FastInstant as Instant, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
+    BlockBody, FastInstant as Instant, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
 };
 use reth_provider::{
     BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockReader, ChangeSetReader,
@@ -2483,6 +2484,15 @@ where
 
         if let Err(e) = self.consensus.validate_block_pre_execution(block) {
             error!(target: "engine::tree", ?block, "Failed to validate block {}: {e}", block.hash());
+            // Log specifically if this is a BlockGasUsed error from tree validation
+            if matches!(e, ConsensusError::BlockGasUsed { .. }) {
+                error!(
+                    target: "engine::tree",
+                    block_number = block.number(),
+                    block_hash = %block.hash(),
+                    "BlockGasUsed error detected in engine::tree::validate_block (pre-execution validation)"
+                );
+            }
             return Err(e)
         }
 
@@ -3114,6 +3124,37 @@ where
             %validation_err,
             "Invalid block error on new payload",
         );
+
+        // Log specifically if this is a BlockGasUsed error during block insertion
+        if matches!(validation_err, error::InsertBlockValidationError::Consensus(ConsensusError::BlockGasUsed { .. })) {
+            error!(
+                target: "engine::tree",
+                block_number = block.number(),
+                block_hash = %block.hash(),
+                "BlockGasUsed error detected in engine::tree::on_insert_block_error (during block insertion)"
+            );
+        }
+
+        // Print all transactions in the invalid block
+        warn!(
+            target: "engine::tree",
+            invalid_hash=%block.hash(),
+            tx_count=block.body().transactions().len(),
+            "Invalid block contains {} transactions",
+            block.body().transactions().len()
+        );
+        for (idx, tx) in block.body().transactions().iter().enumerate() {
+            warn!(
+                target: "engine::tree",
+                invalid_hash=%block.hash(),
+                tx_index=idx,
+                tx_hash=%tx.tx_hash(),
+                tx_nonce=tx.nonce(),
+                tx_gas_limit=tx.gas_limit(),
+                "Transaction in invalid block"
+            );
+        }
+
         let latest_valid_hash = self.latest_valid_hash_for_invalid_payload(block.parent_hash())?;
 
         // keep track of the invalid header unless the consensus impl considers it transient
