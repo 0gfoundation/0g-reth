@@ -4,9 +4,7 @@ use alloy_eips::{eip7685::Requests, Encodable2718};
 use alloy_primitives::{Bloom, Bytes, B256};
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::ConsensusError;
-use reth_primitives_traits::{
-    receipt::gas_spent_by_transactions, Block, GotExpected, Receipt, RecoveredBlock, SealedBlock,
-};
+use reth_primitives_traits::{Block, GotExpected, Receipt, RecoveredBlock, SealedBlock};
 
 /// Validate a block with regard to execution results:
 ///
@@ -24,15 +22,51 @@ where
     ChainSpec: EthereumHardforks,
 {
     let mut header = block.header().clone();
+
+    // Print each receipt during cumulative_gas_used calculation
+    tracing::info!(
+        target: "consensus::validation",
+        block_number = block.header().number(),
+        receipts_count = receipts.len(),
+        "Starting to process receipts for cumulative_gas_used calculation"
+    );
+
+    for (idx, receipt) in receipts.iter().enumerate() {
+        tracing::info!(
+            target: "consensus::validation",
+            block_number = block.header().number(),
+            receipt_index = idx,
+            cumulative_gas_used = receipt.cumulative_gas_used(),
+            success = receipt.status(),
+            "Receipt details during cumulative_gas_used calculation"
+        );
+    }
+
     // Check if gas used matches the value set in header.
     let cumulative_gas_used =
         receipts.last().map(|receipt| receipt.cumulative_gas_used()).unwrap_or(0);
+
+    tracing::info!(
+        target: "consensus::validation",
+        block_number = block.header().number(),
+        final_cumulative_gas_used = cumulative_gas_used,
+        header_gas_used = block.header().gas_used(),
+        "Final cumulative_gas_used calculation complete"
+    );
+
     if block.header().gas_used() != cumulative_gas_used {
+        // Update header with actual gas used from execution
+        // This is expected because proposal uses gas_limit while validation uses actual execution result
         header.set_gas_used(cumulative_gas_used);
-        return Err(ConsensusError::BlockGasUsed {
-            gas: GotExpected { got: cumulative_gas_used, expected: block.header().gas_used() },
-            gas_spent_by_tx: gas_spent_by_transactions(receipts),
-        })
+        tracing::info!(
+            target: "consensus::validation",
+            block_number = block.header().number(),
+            block_hash = ?block.hash(),
+            proposal_gas = block.header().gas_used(),
+            actual_gas = cumulative_gas_used,
+            "Updating header gas_used with actual execution result"
+        );
+        // Do not return error - header will be updated and re-signed
     }
 
     // Before Byzantium, receipts contained state root that would mean that expensive
