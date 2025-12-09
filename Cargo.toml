@@ -672,42 +672,37 @@ vergen-git2 = "10.0.1"
 ipnet = "2.11"
 
 [patch.crates-io]
-# reth-v2.8.1 migration: the original pinned revm `71cbb675` (revm merge PR #2, same tree as
-# `c29ad165`) and alloy-evm `f427b5f3` (alloy-evm merge PR #3, same tree as `b2c2f9c`). Their
-# replays are revm `6726ca5c` and alloy-evm `18f2ea11`. The original listed the 11 revm crates
+# reth-v2.8.1 migration: the original pinned revm `6ba11f70` ("fix gas used", on top of the
+# `71cbb675` pinned before), replayed as `35a40c6d`. The original listed the 11 revm crates
 # reth 1.8.1 resolved, including `op-revm`; reth v2.8.1 resolves 12 revm crates (adds
 # `revm-handler` and `revm-precompile`, which carry the 0G stateful precompile code) and no
 # `op-revm`, so all 12 are listed and `op-revm` is dropped, keeping a single source for every
 # revm crate.
-revm = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-database-interface" }
-revm-handler = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-handler" }
-revm-precompile = { git = "https://github.com/0gfoundation/revm", rev = "6726ca5c26a46f9493c628518cb9b9e11f13613d", package = "revm-precompile" }
+revm = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-database-interface" }
+revm-handler = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-handler" }
+revm-precompile = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-precompile" }
 
-# reth-v2.8.1 migration: the original switched alloy-evm from `rev = 6b65ec86` to
-# `branch = "mainnet-staking"`, which its Cargo.lock resolved to `8175261` ("feat: apply staking
-# distribution" on top of `f427b5f3`, without `6b65ec86`'s 80% minimum gas). `8175261` has no
-# replayed counterpart; its patch is the same as `6b65ec8..fb52369`, so the closest replayed commit
-# is `bcee8b8b` (= `fb52369`, the `pick-geth-features` pin of the next commits), which keeps the
-# 80% minimum gas that the previous commits already pinned. A branch would move, so the replayed
-# SHA is pinned.
+# reth-v2.8.1 migration: the original switched alloy-evm to `branch = "pick-geth-features"`,
+# which its Cargo.lock resolved to `fb52369d` ("feat: apply staking distribution"), replayed as
+# `bcee8b8b`. A branch would move, so the replayed SHA is pinned.
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "bcee8b8bf6f4883cc38f0cb67fe505a899b69243" }
 
 # Patch alloy 1.0.35 with 0g-alloy
-# reth-v2.8.1 migration: the original switched 0g-alloy from `rev = bf33bea7` to
-# `branch = "mainnet-staking"` (`0f605806` in its Cargo.lock, same tree as `54d1e2d3`, replayed as
-# `9566607b`) and added `package = ...` to every entry plus `features` to `alloy-provider`,
-# `alloy-rpc-types` and `alloy-transport-http`. The same form is used for all 31 crates reth v2.8.1
-# resolves (the original's 27 plus `alloy-consensus-any`, `alloy-node-bindings`,
-# `alloy-rpc-types-any` and `alloy-tx-macros`), pinned to the replayed SHA.
+# reth-v2.8.1 migration: the original pinned 0g-alloy `rev = 54d1e2d3` (merge PR #2, same tree as
+# the `0f605806` that `branch = "mainnet-staking"` resolved to before), replayed as `9566607b`,
+# with `package = ...` on every entry plus `features` on `alloy-provider`, `alloy-rpc-types` and
+# `alloy-transport-http`. The same form is used for all 31 crates reth v2.8.1 resolves (the
+# original's 27 plus `alloy-consensus-any`, `alloy-node-bindings`, `alloy-rpc-types-any` and
+# `alloy-tx-macros`).
 alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-consensus" }
 alloy-consensus-any = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-consensus-any" }
 alloy-contract = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-contract" }

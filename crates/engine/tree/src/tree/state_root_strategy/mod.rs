@@ -895,11 +895,11 @@ where
         // reth-v2.8.1 migration: 81afd9cc2 ("set state root without state root task") added
         // `use_state_root_task = false;` in `payload_validator.rs` right before the state root
         // was computed, so the root never came from the state-root task, whatever the config
-        // said. Upstream moved that choice into this `prepare`, so the override is applied
-        // here; in v2.8.1 the non-task path is the synchronous job below. The original
-        // condition was `if !ctx.config.use_state_root_task()`.
-        let use_state_root_task = false;
-        if !use_state_root_task {
+        // said. Upstream moved that choice into this `prepare`, so the override was applied here
+        // as `let use_state_root_task = false; if !use_state_root_task {`. 55d0c33bf commented
+        // the override out, so the config decides again (upstream's condition below).
+        // let use_state_root_task = false;
+        if !ctx.config.use_state_root_task() {
             return Ok(PreparedStateRootJob::new(
                 Box::new(SynchronousStateRootJob {
                     state_provider_factory: ctx.state_provider_factory,
