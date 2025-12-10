@@ -24,7 +24,6 @@ use reth_evm::{
     execute::{BlockBuilder, BlockBuilderOutcome},
     ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
-use alloy_evm::block::CommitChanges;
 use reth_evm_ethereum::EthEvmConfig;
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload, EthPayloadBuilderAttributes};
 use reth_payload_builder_primitives::PayloadBuilderError;
@@ -340,20 +339,10 @@ where
             }
         }
 
-        // Add transaction to block without actual execution by using a custom closure
-        // that always returns CommitChanges::Yes but doesn't perform execution
-        let gas_used_from_execution = builder.execute_transaction_with_commit_condition(
-            tx.clone(),
-            |_result| {
-                // Always commit the transaction without actual execution
-                // This bypasses the execution but still adds the transaction to the block
-                trace!(target: "payload_builder", ?tx, gas_limit = gas_used, "committing transaction without execution");
-                CommitChanges::Yes
-            },
-        )?;
+        // Add transaction to block without execution
+        builder.add_transaction_without_execution(tx.clone());
 
-        // Use the gas limit instead of actual execution result
-        let gas_used = gas_used_from_execution.unwrap_or(gas_used);
+        // gas_used is set to the transaction's gas limit (line 301)
 
         // Update sender's cumulative gas cost
         sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
