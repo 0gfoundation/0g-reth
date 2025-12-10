@@ -368,6 +368,13 @@ pub trait BlockBuilder {
         self.execute_transaction_with_result_closure(tx, |_| ())
     }
 
+    /// Adds a transaction to the block without executing it.
+    /// This only stores the transaction in internal state, no EVM execution occurs.
+    fn add_transaction_without_execution(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+    );
+
     /// Completes the block building process and returns the [`BlockBuilderOutcome`].
     ///
     /// When `state_root_precomputed` is `None`, the state root is computed internally via
@@ -498,6 +505,14 @@ where
         } else {
             Ok(None)
         }
+    }
+
+    fn add_transaction_without_execution(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+    ) {
+        let (_, tx) = tx.into_parts();
+        self.transactions.push(tx);
     }
 
     fn finish(
