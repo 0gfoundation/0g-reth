@@ -554,7 +554,7 @@ where
         if run_parallel_state_root {
             // if we new payload extends the current canonical change we attempt to use the
             // background task or try to compute it in parallel
-            // use_state_root_task = false;
+            use_state_root_task = false;
             if use_state_root_task {
                 debug!(target: "engine::tree", block=?block_num_hash, "Using sparse trie state root algorithm");
                 match handle.state_root() {

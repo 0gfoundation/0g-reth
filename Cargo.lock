@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.21.1"
-source = "git+https://github.com/0gfoundation/alloy-evm?branch=pick-geth-features#fb52369d4bdb79162ece6da8c623c7f1973e055e"
+source = "git+https://github.com/0gfoundation/alloy-evm?rev=aab7e84417329e5ef3f3fa1c12df1b68bf1871c7#aab7e84417329e5ef3f3fa1c12df1b68bf1871c7"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
