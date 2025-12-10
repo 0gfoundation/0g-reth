@@ -590,6 +590,7 @@ where
         let parallel_bal_execution = ensure_ok!(self.bal_path_eligible(env.decoded_bal.as_deref()));
 
         // Prepare the state-root job before execution so it can provide streaming hooks.
+        let state_root_config = self.config.clone().with_has_enough_parallelism(false);
         let mut state_root_job =
             ensure_ok!(self.state_root_strategy.prepare(StateRootJobContext::new(
                 &self.runtime,
@@ -597,7 +598,7 @@ where
                 &env,
                 provider_builder.clone(),
                 overlay_factory,
-                &self.config,
+                &state_root_config,
                 parallel_bal_execution,
                 ctx.state_mut(),
             )));
