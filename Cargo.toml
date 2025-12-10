@@ -691,9 +691,8 @@ revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = 
 revm-handler = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-handler" }
 revm-precompile = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-precompile" }
 
-# reth-v2.8.1 migration: the original switched alloy-evm to `branch = "pick-geth-features"`,
-# which its Cargo.lock resolved to `fb52369d` ("feat: apply staking distribution"), replayed as
-# `bcee8b8b`. A branch would move, so the replayed SHA is pinned.
+# reth-v2.8.1 migration: the original pinned alloy-evm `aab7e844` (merge PR #7, same tree as
+# `fb52369d` "feat: apply staking distribution"), replayed as `bcee8b8b`.
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "bcee8b8bf6f4883cc38f0cb67fe505a899b69243" }
 
 # Patch alloy 1.0.35 with 0g-alloy
