@@ -691,9 +691,10 @@ revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = 
 revm-handler = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-handler" }
 revm-precompile = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-precompile" }
 
-# reth-v2.8.1 migration: the original pinned alloy-evm `aab7e844` (merge PR #7, same tree as
-# `fb52369d` "feat: apply staking distribution"), replayed as `bcee8b8b`.
-alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "bcee8b8bf6f4883cc38f0cb67fe505a899b69243" }
+# reth-v2.8.1 migration: the original pinned alloy-evm `c3f2a7ee` (merge PR #8, same tree as
+# `a2444be` "fix: Add system caller notification for post-block staking distribution state
+# changes"), replayed as `4156b210`.
+alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "4156b2108c3fefa656a4b15c0b973b9af335fc6d" }
 
 # Patch alloy 1.0.35 with 0g-alloy
 # reth-v2.8.1 migration: the original pinned 0g-alloy `rev = 54d1e2d3` (merge PR #2, same tree as
