@@ -490,6 +490,73 @@ impl<Tx, Err> PayloadHandle<Tx, Err> {
             .take_while(|res| res.is_ok())
             .map(|res| res.unwrap())
     }
+
+    /// Sends the final post-execution state to the multiproof task.
+    ///
+    /// This captures any state changes that occurred after transaction execution
+    /// (e.g., withdrawals, beacon root updates) that were not sent via the state hook.
+    /// The multiproof task's `partition_by_targets` will automatically filter out
+    /// any accounts that were already processed, so sending the complete state is safe.
+    pub fn send_post_execution_state(&self, bundle_state: &BundleState) {
+        if let Some(sender) = &self.to_multi_proof {
+            // Convert BundleState to EvmState format
+            let evm_state: reth_revm::state::EvmState = bundle_state
+                .state
+                .iter()
+                .filter_map(|(address, bundle_account)| {
+                    // Only include accounts that have info (not destroyed)
+                    bundle_account.info.as_ref().map(|info| {
+                        let account = revm::state::Account {
+                            info: info.clone(),
+                            storage: bundle_account
+                                .storage
+                                .iter()
+                                .map(|(slot, value)| {
+                                    (
+                                        *slot,
+                                        revm::state::EvmStorageSlot::new_changed(
+                                            value.previous_or_original_value,
+                                            value.present_value,
+                                            0,
+                                        ),
+                                    )
+                                })
+                                .collect(),
+                            status: match bundle_account.status {
+                                revm::database::AccountStatus::LoadedNotExisting
+                                | revm::database::AccountStatus::LoadedEmptyEIP161 => {
+                                    revm::state::AccountStatus::LoadedAsNotExisting
+                                }
+                                revm::database::AccountStatus::Loaded
+                                | revm::database::AccountStatus::Changed
+                                | revm::database::AccountStatus::InMemoryChange => {
+                                    revm::state::AccountStatus::Touched
+                                }
+                                revm::database::AccountStatus::Destroyed
+                                | revm::database::AccountStatus::DestroyedAgain => {
+                                    revm::state::AccountStatus::SelfDestructed
+                                }
+                                revm::database::AccountStatus::DestroyedChanged => {
+                                    revm::state::AccountStatus::SelfDestructed
+                                        | revm::state::AccountStatus::Touched
+                                }
+                            },
+                            transaction_id: 0,
+                        };
+                        (*address, account)
+                    })
+                })
+                .collect();
+
+            // Send as PostBlock to indicate these are post-transaction changes
+            let _ = sender.send(MultiProofMessage::StateUpdate(
+                StateChangeSource::PostBlock(
+                    alloy_evm::block::StateChangePostBlockSource::WithdrawalRequestsContract,
+                ),
+                evm_state,
+            ));
+        }
+    }
 }
 
 /// Access to the spawned [`PrewarmCacheTask`].
