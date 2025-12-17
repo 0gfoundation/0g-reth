@@ -247,6 +247,7 @@ where
             prewarm_handle,
             state_root: Some(state_root_rx),
             transactions: execution_rx,
+            sent_updates: Arc::new(parking_lot::Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -269,6 +270,7 @@ where
             prewarm_handle,
             state_root: None,
             transactions: execution_rx,
+            sent_updates: Arc::new(parking_lot::Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -430,6 +432,13 @@ pub struct PayloadHandle<Tx, Err> {
     state_root: Option<mpsc::Receiver<Result<StateRootComputeOutcome, ParallelStateRootError>>>,
     /// Stream of block transactions
     transactions: mpsc::Receiver<Result<Tx, Err>>,
+    /// Tracks (address, Option<slot>) pairs sent via state_hook for diff analysis
+    /// None slot means account-level update, Some(slot) means storage slot update
+    sent_updates: Arc<
+        parking_lot::Mutex<
+            std::collections::HashSet<(alloy_primitives::Address, Option<alloy_primitives::U256>)>,
+        >,
+    >,
 }
 
 impl<Tx, Err> PayloadHandle<Tx, Err> {
@@ -452,8 +461,22 @@ impl<Tx, Err> PayloadHandle<Tx, Err> {
     pub fn state_hook(&self) -> impl OnStateHook {
         // convert the channel into a `StateHookSender` that emits an event on drop
         let to_multi_proof = self.to_multi_proof.clone().map(StateHookSender::new);
+        let sent_updates = self.sent_updates.clone();
 
         move |source: StateChangeSource, state: &EvmState| {
+            // Track what we're sending for diff analysis
+            {
+                let mut guard = sent_updates.lock();
+                for (address, account) in state.iter() {
+                    // Record account-level update
+                    guard.insert((*address, None));
+                    // Record storage slot updates
+                    for (slot, _) in account.storage.iter() {
+                        guard.insert((*address, Some(*slot)));
+                    }
+                }
+            }
+
             if let Some(sender) = &to_multi_proof {
                 let _ = sender.send(MultiProofMessage::StateUpdate(source, state.clone()));
             }
@@ -498,6 +521,66 @@ impl<Tx, Err> PayloadHandle<Tx, Err> {
     /// The multiproof task's `partition_by_targets` will automatically filter out
     /// any accounts that were already processed, so sending the complete state is safe.
     pub fn send_post_execution_state(&self, bundle_state: &BundleState) {
+        // === DIFF ANALYSIS: Find what BundleState has but state_hook didn't send ===
+        let sent = self.sent_updates.lock();
+        let mut missed_accounts: Vec<alloy_primitives::Address> = Vec::new();
+        let mut missed_slots: Vec<(alloy_primitives::Address, alloy_primitives::U256)> = Vec::new();
+
+        for (address, bundle_account) in bundle_state.state.iter() {
+            // Check if account was sent
+            if !sent.contains(&(*address, None)) {
+                missed_accounts.push(*address);
+            }
+            // Check each storage slot
+            for (slot, _value) in bundle_account.storage.iter() {
+                if !sent.contains(&(*address, Some(*slot))) {
+                    missed_slots.push((*address, *slot));
+                }
+            }
+        }
+
+        // Log the diff
+        if !missed_accounts.is_empty() || !missed_slots.is_empty() {
+            tracing::warn!(
+                target: "engine::tree::state_diff",
+                missed_accounts_count = missed_accounts.len(),
+                missed_slots_count = missed_slots.len(),
+                "STATE DIFF DETECTED: BundleState has entries not sent via state_hook"
+            );
+            for addr in &missed_accounts {
+                let status = bundle_state.state.get(addr).map(|a| format!("{:?}", a.status));
+                tracing::warn!(
+                    target: "engine::tree::state_diff",
+                    address = ?addr,
+                    status = ?status,
+                    "MISSED ACCOUNT: Not sent via state_hook"
+                );
+            }
+            for (addr, slot) in &missed_slots {
+                let value =
+                    bundle_state.state.get(addr).and_then(|a| a.storage.get(slot)).map(|v| {
+                        format!("{:?} -> {:?}", v.previous_or_original_value, v.present_value)
+                    });
+                tracing::warn!(
+                    target: "engine::tree::state_diff",
+                    address = ?addr,
+                    slot = ?slot,
+                    value = ?value,
+                    "MISSED SLOT: Not sent via state_hook"
+                );
+            }
+        } else {
+            tracing::debug!(
+                target: "engine::tree::state_diff",
+                total_sent_accounts = sent.iter().filter(|(_, s)| s.is_none()).count(),
+                total_sent_slots = sent.iter().filter(|(_, s)| s.is_some()).count(),
+                bundle_accounts = bundle_state.state.len(),
+                "No state diff: all BundleState entries were sent via state_hook"
+            );
+        }
+        drop(sent);
+        // === END DIFF ANALYSIS ===
+
         if let Some(sender) = &self.to_multi_proof {
             // Convert BundleState to EvmState format
             let evm_state: reth_revm::state::EvmState = bundle_state
