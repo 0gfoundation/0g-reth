@@ -25,6 +25,7 @@ use revm::{
     context::result::ExecutionResult,
     database::{states::bundle_state::BundleRetention, BundleState, State},
 };
+use reth_tracing::tracing::info;
 
 /// A type that knows how to execute a block. It is assumed to operate on a
 /// [`crate::Evm`] internally and use [`State`] as database.
@@ -343,6 +344,13 @@ pub trait BlockBuilder {
         self.execute_transaction_with_result_closure(tx, |_| ())
     }
 
+    /// Adds a transaction to the block without executing it.
+    /// This only stores the transaction in internal state, no EVM execution occurs.
+    fn add_transaction_without_execution(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+    );
+
     /// Completes the block building process and returns the [`BlockBuilderOutcome`].
     fn finish(
         self,
@@ -476,6 +484,13 @@ where
         }
     }
 
+    fn add_transaction_without_execution(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+    ) {
+        self.transactions.push(tx.into_recovered());
+    }
+
     fn finish(
         self,
         state: impl StateProvider,
@@ -507,6 +522,8 @@ where
         })?;
 
         let block = RecoveredBlock::new_unhashed(block, senders);
+
+        info!("[Debug] BlockBuilder finish, block={:#?}", block);
 
         Ok(BlockBuilderOutcome { execution_result: result, hashed_state, trie_updates, block })
     }

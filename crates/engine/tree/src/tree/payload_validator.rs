@@ -560,17 +560,19 @@ where
                     Ok(StateRootComputeOutcome { state_root, trie_updates }) => {
                         let elapsed = root_time.elapsed();
                         info!(target: "engine::tree", ?state_root, ?elapsed, "State root task finished");
+                        
+                        maybe_state_root = Some((state_root, trie_updates, elapsed))
                         // we double check the state root here for good measure
-                        if state_root == block.header().state_root() {
-                            maybe_state_root = Some((state_root, trie_updates, elapsed))
-                        } else {
-                            warn!(
-                                target: "engine::tree",
-                                ?state_root,
-                                block_state_root = ?block.header().state_root(),
-                                "State root task returned incorrect state root"
-                            );
-                        }
+                        // if state_root == block.header().state_root() {
+                        //     maybe_state_root = Some((state_root, trie_updates, elapsed))
+                        // } else {
+                        //     warn!(
+                        //         target: "engine::tree",
+                        //         ?state_root,
+                        //         block_state_root = ?block.header().state_root(),
+                        //         "State root task returned incorrect state root"
+                        //     );
+                        // }
                     }
                     Err(error) => {
                         debug!(target: "engine::tree", %error, "State root task failed");
@@ -657,6 +659,8 @@ where
         } else {
             ExecutedTrieUpdates::Present(Arc::new(trie_output))
         };
+
+        info!("[Debug] Validate block with state, block={:?}, output={:?}, hashed_state={:?}", &block, &output, &hashed_state);
 
         Ok(ExecutedBlockWithTrieUpdates {
             block: ExecutedBlock {

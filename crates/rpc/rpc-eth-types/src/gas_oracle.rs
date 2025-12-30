@@ -111,16 +111,20 @@ where
 
         // this is the number of blocks that we will cache the values for
         let cached_values = (oracle_config.blocks * 5).max(oracle_config.max_block_history as u32);
+        let default_price = oracle_config.default_suggested_fee.unwrap_or_else(|| GasPriceOracleResult::default().price);
+        
         let inner = Mutex::new(GasPriceOracleInner {
             last_price: GasPriceOracleResult {
                 block_hash: B256::ZERO,
-                price: oracle_config
-                    .default_suggested_fee
-                    .unwrap_or_else(|| GasPriceOracleResult::default().price),
+                price: default_price,
             },
             lowest_effective_tip_cache: EffectiveTipLruCache(LruMap::new(ByLength::new(
                 cached_values,
             ))),
+            default_price: GasPriceOracleResult {
+                block_hash: B256::ZERO,
+                price: U256::from(2).saturating_mul(default_price),
+            },
         });
 
         Self { provider, oracle_config, cache, ignore_price, inner }
@@ -168,18 +172,24 @@ where
                     vals.to_owned()
                 } else {
                     // Otherwise we fetch it using get_block_values
-                    let (parent_hash, block_values) = self
+                    let (parent_hash, mut block_values, gas_limit, gas_used) = self
                         .get_block_values(current_hash, SAMPLE_NUMBER)
                         .await?
                         .ok_or(EthApiError::HeaderNotFound(current_hash.into()))?;
                     inner
                         .lowest_effective_tip_cache
                         .insert(current_hash, (parent_hash, block_values.clone()));
+                    // if block gas usage is less than 60%, set block's gasPrice as defaultGasPrice
+                    if gas_limit > 0 && gas_used * 10 / gas_limit < 6 { 
+                        block_values.iter_mut().for_each(|price| {
+                            *price = inner.default_price.price
+                        });
+                    }
                     (parent_hash, block_values)
                 };
-
+            
             if block_values.is_empty() {
-                results.push(U256::from(inner.last_price.price));
+                results.push(inner.default_price.price);
             } else {
                 results.extend(block_values);
                 populated_blocks += 1;
@@ -195,7 +205,7 @@ where
 
         // sort results then take the configured percentile result
         let mut price = if results.is_empty() {
-            inner.last_price.price
+            inner.default_price.price
         } else {
             results.sort_unstable();
             *results.get((results.len() - 1) * self.oracle_config.percentile as usize / 100).expect(
@@ -226,7 +236,7 @@ where
         &self,
         block_hash: B256,
         limit: usize,
-    ) -> EthResult<Option<(B256, Vec<U256>)>> {
+    ) -> EthResult<Option<(B256, Vec<U256>, u64, u64)>> {
         // check the cache (this will hit the disk if the block is not cached)
         let Some(block) = self.cache.get_recovered_block(block_hash).await? else {
             return Ok(None)
@@ -234,6 +244,8 @@ where
 
         let base_fee_per_gas = block.base_fee_per_gas();
         let parent_hash = block.parent_hash();
+        let gas_limit = block.gas_limit();
+        let gas_used = block.gas_used();
 
         // sort the functions by ascending effective tip first
         let sorted_transactions = block.transactions_recovered().sorted_by_cached_key(|tx| {
@@ -275,7 +287,7 @@ where
             }
         }
 
-        Ok(Some((parent_hash, prices)))
+        Ok(Some((parent_hash, prices, gas_limit, gas_used)))
     }
 
     /// Suggests a max priority fee value using a simplified and more predictable algorithm
@@ -391,6 +403,7 @@ where
 struct GasPriceOracleInner {
     last_price: GasPriceOracleResult,
     lowest_effective_tip_cache: EffectiveTipLruCache,
+    default_price: GasPriceOracleResult,
 }
 
 /// Wrapper struct for `LruMap`
