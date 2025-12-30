@@ -844,7 +844,10 @@ fn test_validated_payload_bal_is_inserted_into_store() {
         )
         .unwrap();
 
-    assert_eq!(outcome, InsertPayloadOk::Inserted(BlockStatus::Valid));
+    assert_eq!(
+        outcome,
+        InsertPayloadOk::Inserted(BlockStatus::Valid { head: child_num_hash })
+    );
     assert_eq!(bal_store.get_by_hash(child_num_hash.hash).unwrap(), Some(raw_bal));
 }
 

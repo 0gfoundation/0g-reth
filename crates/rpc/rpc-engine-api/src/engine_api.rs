@@ -35,7 +35,7 @@ use std::{
     time::{Instant, SystemTime},
 };
 use tokio::sync::oneshot;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 /// The Engine API response sender.
 pub type EngineApiSender<Ok> = oneshot::Sender<EngineApiResult<Ok>>;
@@ -157,7 +157,9 @@ where
             .validator
             .validate_version_specific_fields(EngineApiMessageVersion::V1, payload_or_attrs)?;
 
-        Ok(self.inner.beacon_consensus.new_payload(payload).await?)
+        let result = self.inner.beacon_consensus.new_payload(payload).await?;
+        info!("[Debug] EngineApi new_payload_v4, result={:?}", &result);
+        Ok(result)
     }
 
     /// Metered version of `new_payload_v1`.
@@ -235,6 +237,8 @@ where
         &self,
         payload: PayloadT::ExecutionData,
     ) -> EngineApiResult<PayloadStatus> {
+        info!("[Debug] EngineApi new_payload_v4, payload={:?}", &payload);
+
         let payload_or_attrs = PayloadOrAttributes::<
             '_,
             PayloadT::ExecutionData,

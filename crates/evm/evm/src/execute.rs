@@ -21,6 +21,7 @@ use reth_primitives_traits::{
 };
 use reth_storage_api::StateProvider;
 pub use reth_storage_errors::provider::ProviderError;
+use reth_tracing::tracing::info;
 use reth_trie_common::{updates::TrieUpdates, HashedPostState};
 use revm::{
     database::{states::bundle_state::BundleRetention, BundleState, State},
@@ -367,6 +368,13 @@ pub trait BlockBuilder {
         self.execute_transaction_with_result_closure(tx, |_| ())
     }
 
+    /// Adds a transaction to the block without executing it.
+    /// This only stores the transaction in internal state, no EVM execution occurs.
+    fn add_transaction_without_execution(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+    );
+
     /// Completes the block building process and returns the [`BlockBuilderOutcome`].
     ///
     /// When `state_root_precomputed` is `None`, the state root is computed internally via
@@ -499,6 +507,14 @@ where
         }
     }
 
+    fn add_transaction_without_execution(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+    ) {
+        let (_, tx) = tx.into_parts();
+        self.transactions.push(tx);
+    }
+
     fn finish(
         self,
         state: impl StateProvider,
@@ -538,6 +554,8 @@ where
         })?;
 
         let block = RecoveredBlock::new_unhashed(block, senders);
+
+        info!("[Debug] BlockBuilder finish, block={:#?}", block);
 
         Ok(BlockBuilderOutcome {
             execution_result: result,

@@ -826,7 +826,6 @@ where
         &mut self,
         payload: T::ExecutionData,
     ) -> Result<TryInsertPayloadResult, InsertBlockFatalError> {
-        let block_hash = payload.block_hash();
         let num_hash = payload.num_hash();
         let parent_hash = payload.parent_hash();
         let mut latest_valid_hash = None;
@@ -834,13 +833,13 @@ where
         match self.insert_payload(payload) {
             Ok(status) => {
                 let (status, already_seen) = match status {
-                    InsertPayloadOk::Inserted(BlockStatus::Valid) => {
-                        latest_valid_hash = Some(block_hash);
+                    InsertPayloadOk::Inserted(BlockStatus::Valid { head }) => {
+                        latest_valid_hash = Some(head.hash);
                         self.try_connect_buffered_blocks(num_hash)?;
                         (PayloadStatusEnum::Valid, false)
                     }
-                    InsertPayloadOk::AlreadySeen(BlockStatus::Valid) => {
-                        latest_valid_hash = Some(block_hash);
+                    InsertPayloadOk::AlreadySeen(BlockStatus::Valid { head }) => {
+                        latest_valid_hash = Some(head.hash);
                         (PayloadStatusEnum::Valid, true)
                     }
                     InsertPayloadOk::Inserted(BlockStatus::Disconnected { .. }) => {
@@ -2520,7 +2519,7 @@ where
                 Ok(res) => {
                     debug!(target: "engine::tree", child =?child_num_hash, ?res, "connected buffered block");
                     if self.is_any_sync_target(child_num_hash.hash) &&
-                        matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid))
+                        matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid { .. }))
                     {
                         debug!(target: "engine::tree", child =?child_num_hash, "connected sync target block");
                         // we just inserted a block that we know is part of the canonical chain, so
@@ -2887,7 +2886,7 @@ where
 
         // try to append the block
         match self.insert_block(block) {
-            Ok(InsertPayloadOk::Inserted(BlockStatus::Valid)) => {
+            Ok(InsertPayloadOk::Inserted(BlockStatus::Valid { .. })) => {
                 return self.on_valid_downloaded_block(block_num_hash);
             }
             Ok(InsertPayloadOk::Inserted(BlockStatus::Disconnected { head, missing_ancestor })) => {
@@ -2960,7 +2959,7 @@ where
     /// - Updates pending block state when appropriate
     /// - Emits consensus engine events and records metrics
     ///
-    /// Returns `InsertPayloadOk::Inserted(BlockStatus::Valid)` on successful execution,
+    /// Returns `InsertPayloadOk::Inserted(BlockStatus::Valid { .. })` on successful execution,
     /// `InsertPayloadOk::AlreadySeen` if the block already exists, or
     /// `InsertPayloadOk::Inserted(BlockStatus::Disconnected)` if parent state is missing.
     #[instrument(level = "debug", target = "engine::tree", skip_all, fields(?block_id))]
@@ -2981,7 +2980,7 @@ where
         // Check if block already exists - first in memory, then DB only if it could be persisted
         if self.state.tree_state.contains_hash(&block_num_hash.hash) {
             convert_to_block(self, input)?;
-            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid));
+            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid { head: block_num_hash }));
         }
 
         // Only query DB if block could be persisted (number <= last persisted block).
@@ -2992,9 +2991,11 @@ where
                     let block = convert_to_block(self, input)?;
                     return Err(InsertBlockError::new(block, err.into()).into());
                 }
-                Ok(Some(_)) => {
+                Ok(Some(header)) => {
                     convert_to_block(self, input)?;
-                    return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid));
+                    return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
+                        head: header.num_hash(),
+                    }));
                 }
                 Ok(None) => {}
             }
@@ -3082,6 +3083,9 @@ where
         self.state.tree_state.insert_executed(executed.clone());
         self.metrics.engine.executed_blocks.set(self.state.tree_state.block_count() as f64);
 
+        let head = executed.block.recovered_block.num_hash();
+        info!("[Debug] InsertPayloadOk Inserted, block={:?}, head={:?}", &block_num_hash, &head);
+
         // emit insert event
         let elapsed = start.elapsed();
         let engine_event = if is_fork {
@@ -3096,7 +3100,7 @@ where
             .block_insert_total_duration
             .record(block_insert_start.elapsed().as_secs_f64());
         debug!(target: "engine::tree", block=?block_num_hash, "Finished inserting block");
-        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid))
+        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid { head }))
     }
 
     /// Handles an error that occurred while inserting a block.
@@ -3474,7 +3478,10 @@ where
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BlockStatus {
     /// The block is valid and block extends canonical chain.
-    Valid,
+    Valid {
+        /// Current canonical head.
+        head: BlockNumHash,
+    },
     /// The block may be valid and has an unknown missing ancestor.
     Disconnected {
         /// Current canonical head.

@@ -9,7 +9,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_evm::block::CommitChanges;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
@@ -19,7 +18,7 @@ use reth_basic_payload_builder::{
 };
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
-use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError};
+use reth_errors::ConsensusError;
 use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
 use reth_evm::{
     block::TxResult,
@@ -31,7 +30,6 @@ use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedS
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::PayloadAttributes;
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
@@ -405,52 +403,10 @@ where
             continue
         }
 
-        let mut tx_regular_gas_used = 0;
-        let gas_output = match builder.execute_transaction_with_commit_condition(tx, |result| {
-            tx_regular_gas_used = result.result().result.gas().block_regular_gas_used();
-            CommitChanges::Yes
-        }) {
-            Ok(gas_output) => gas_output.unwrap_or_default(),
-            Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
-                error, ..
-            })) => {
-                if error.is_nonce_too_low() {
-                    // if the nonce is too low, we can skip this transaction
-                    trace!(target: "payload_builder", %error, ?tx_hash, "skipping nonce too low transaction");
-                } else {
-                    // if the transaction is invalid, we can skip it and all of its
-                    // descendants
-                    trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction and its descendants");
-                    best_txs.mark_invalid(
-                        &pool_tx,
-                        InvalidPoolTransactionError::Consensus(
-                            InvalidTransactionError::TxTypeNotSupported,
-                        ),
-                    );
-                }
-                continue
-            }
-            // The executor is the source of truth for block gas availability. Keep this
-            // non-fatal in case local builder accounting diverges from executor rules.
-            Err(BlockExecutionError::Validation(
-                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
-                    transaction_gas_limit,
-                    block_available_gas,
-                },
-            )) => {
-                trace!(target: "payload_builder", %transaction_gas_limit, %block_available_gas, ?tx_hash, "skipping transaction exceeding block gas limit");
-                best_txs.mark_invalid(
-                    &pool_tx,
-                    InvalidPoolTransactionError::ExceedsGasLimit(
-                        transaction_gas_limit,
-                        block_available_gas,
-                    ),
-                );
-                continue
-            }
-            // this is an error that we should treat as fatal for this attempt
-            Err(err) => return Err(PayloadBuilderError::evm(err)),
-        };
+        // Add transaction to block without execution
+        builder.add_transaction_without_execution(tx);
+        let gas_used = gas_limit;
+        let tx_regular_gas_used = gas_limit.min(tx_gas_limit_cap);
 
         sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
 
@@ -467,12 +423,10 @@ where
         block_transactions_rlp_length += tx_rlp_len;
 
         // update and add to total fees
-        let gas_used = gas_output.tx_gas_used();
         let miner_fee = miner_fee.expect("fee is always valid; execution succeeded");
         total_fees += U256::from(miner_fee) * U256::from(gas_used);
         cumulative_tx_gas_used += gas_used;
         block_regular_gas_used += tx_regular_gas_used;
-        block_state_gas_used += gas_output.state_gas_used();
 
         // Add blob tx sidecar to the payload.
         if let Some(sidecar) = blob_tx_sidecar {
