@@ -20,12 +20,13 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_errors::ConsensusError;
 use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
+// reth-v2.8.1 migration: `block::TxResult` (upstream's, used only by the execution closure that
+// f1a5d5573 removes) is dropped with it, as the original dropped `CommitChanges`.
 use reth_evm::{
-    block::TxResult,
     execute::{BlockBuilder, BlockBuilderOutcome},
     ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
-use alloy_evm::block::{CommitChanges, GasOutput};
+use alloy_evm::block::GasOutput;
 use reth_evm_ethereum::EthEvmConfig;
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload};
@@ -420,30 +421,18 @@ where
             }
         }
 
-        // Add transaction to block without actual execution by using a custom closure
-        // that always returns CommitChanges::Yes but doesn't perform execution
-        // reth-v2.8.1 migration: the original closure only traced and returned
-        // `CommitChanges::Yes`. Upstream's execution call (which this replaces, together with
-        // its per-error `match`; as in the original every error is returned through `?`) also
-        // recorded the transaction's regular gas for the Amsterdam (EIP-8037) block accounting
-        // below, so that line is kept in the closure.
-        let mut tx_regular_gas_used = 0;
-        let gas_used_from_execution = builder.execute_transaction_with_commit_condition(
-            tx.clone(),
-            |result| {
-                tx_regular_gas_used = result.result().result.gas().block_regular_gas_used();
-                // Always commit the transaction without actual execution
-                // This bypasses the execution but still adds the transaction to the block
-                trace!(target: "payload_builder", ?tx, gas_limit = gas_used, "committing transaction without execution");
-                CommitChanges::Yes
-            },
-        )?;
+        // Add transaction to block without execution
+        builder.add_transaction_without_execution(tx.clone());
 
-        // Use the gas limit instead of actual execution result
-        // reth-v2.8.1 migration: the call now returns `Option<GasOutput>` instead of
-        // `Option<u64>`; the fallback wraps the gas limit the same way, and upstream's code below
-        // reads the transaction gas from `gas_output`.
-        let gas_output = gas_used_from_execution.unwrap_or(GasOutput::new(gas_used));
+        // gas_used is set to the transaction's gas limit (line 301)
+        // reth-v2.8.1 migration: f1a5d5573 dropped the execution call and its result
+        // (`gas_used_from_execution.unwrap_or(gas_used)`), leaving `gas_used` = the gas limit.
+        // Upstream's code below reads the transaction gas from `gas_output` and adds
+        // `tx_regular_gas_used` (which the execution closure used to record) to the Amsterdam
+        // (EIP-8037) regular gas. With nothing executed both come from the gas limit as well: the
+        // regular part capped by `tx_gas_limit_cap` like the capacity check above, no state gas.
+        let gas_output = GasOutput::new(gas_used);
+        let tx_regular_gas_used = gas_used.min(tx_gas_limit_cap);
 
         // Update sender's cumulative gas cost
         sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);

@@ -1,7 +1,7 @@
 //! Functionality related to tree state.
 
 use crate::engine::EngineApiKind;
-use alloy_eips::BlockNumHash;
+use alloy_eips::{BlockNumHash, eip7685::Requests};
 use alloy_primitives::{
     map::{B256Map, B256Set},
     BlockNumber, B256,
@@ -92,6 +92,18 @@ impl<N: NodePrimitives> TreeState<N> {
     /// Returns the sealed block header by hash.
     pub fn sealed_header_by_hash(&self, hash: &B256) -> Option<SealedHeader<N::BlockHeader>> {
         self.blocks_by_hash.get(hash).map(|b| b.sealed_block().sealed_header().clone())
+    }
+
+    /// Returns the execution requests by hash.
+    pub(crate) fn execution_requests_by_hash(
+        &self,
+        hash: &B256,
+    ) -> Option<Requests> {
+        // reth-v2.8.1 migration: the original read
+        // `b.execution_outcome().requests.first().unwrap_or(&Requests::default()).clone()`.
+        // Upstream's `ExecutedBlock::execution_outcome()` now returns this block's
+        // `BlockExecutionOutput`, which holds a single `Requests` instead of a per-block list.
+        self.blocks_by_hash.get(hash).map(|b| b.execution_outcome().requests.clone())
     }
 
     /// Returns all available blocks for the given hash that lead back to the canonical chain, from
