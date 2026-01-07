@@ -142,7 +142,7 @@ impl core::fmt::Display for DisplayHardforks {
 
 impl DisplayHardforks {
     /// Creates a new [`DisplayHardforks`] from an iterator of hardforks.
-    pub fn new<'a, I>(hardforks: I) -> Self
+    pub fn new<'a, I>(hardforks: I, staking_activation_time: u64) -> Self
     where
         I: IntoIterator<Item = (&'a dyn Hardfork, ForkCondition)>,
     {
@@ -172,6 +172,8 @@ impl DisplayHardforks {
                 ForkCondition::Never => {}
             }
         }
+
+        post_merge.push(DisplayFork { name: String::from("StakingActivation"), activated_at: ForkCondition::Timestamp(staking_activation_time), eip: None });
 
         Self { pre_merge, with_merge, post_merge }
     }
