@@ -137,6 +137,8 @@ pub static MAINNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
             (mainnet::MAINNET_BPO1_TIMESTAMP, BlobParams::bpo1()),
             (mainnet::MAINNET_BPO2_TIMESTAMP, BlobParams::bpo2()),
         ]),
+        staking_contract_address: None,
+        staking_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -172,6 +174,8 @@ pub static SEPOLIA: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
             (sepolia::SEPOLIA_BPO1_TIMESTAMP, BlobParams::bpo1()),
             (sepolia::SEPOLIA_BPO2_TIMESTAMP, BlobParams::bpo2()),
         ]),
+        staking_contract_address: None,
+        staking_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -202,6 +206,8 @@ pub static HOLESKY: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
             (holesky::HOLESKY_BPO1_TIMESTAMP, BlobParams::bpo1()),
             (holesky::HOLESKY_BPO2_TIMESTAMP, BlobParams::bpo2()),
         ]),
+        staking_contract_address: None,
+        staking_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -234,6 +240,8 @@ pub static HOODI: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
             (hoodi::HOODI_BPO1_TIMESTAMP, BlobParams::bpo1()),
             (hoodi::HOODI_BPO2_TIMESTAMP, BlobParams::bpo2()),
         ]),
+        staking_contract_address: None,
+        staking_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -435,6 +443,11 @@ pub struct ChainSpec<H: BlockHeader = Header> {
 
     /// The settings passed for blob configurations for specific hardforks.
     pub blob_params: BlobScheduleBlobParams,
+
+    /// The staking contract address
+    pub staking_contract_address: Option<Address>,
+
+    pub staking_activation_time: u64,
 }
 
 impl<H: BlockHeader> Default for ChainSpec<H> {
@@ -449,6 +462,8 @@ impl<H: BlockHeader> Default for ChainSpec<H> {
             base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
             prune_delete_limit: MAINNET_PRUNE_DELETE_LIMIT,
             blob_params: Default::default(),
+            staking_contract_address: None,
+            staking_activation_time: 0,
         }
     }
 }
@@ -588,7 +603,9 @@ impl<H: BlockHeader> ChainSpec<H> {
             (fork, condition, metadata)
         });
 
-        DisplayHardforks::with_meta(hardforks_with_meta)
+        // reth-v2.8.1 migration: the original passed `self.staking_activation_time` to
+        // `DisplayHardforks::new`; upstream builds the display through `with_meta` now.
+        DisplayHardforks::with_meta(hardforks_with_meta, self.staking_activation_time)
     }
 
     /// Get the fork id for the given hardfork.
@@ -784,6 +801,8 @@ impl<H: BlockHeader> ChainSpec<H> {
 
     /// Convert header to another type.
     pub fn map_header<NewH: BlockHeader>(self, f: impl FnOnce(H) -> NewH) -> ChainSpec<NewH> {
+        // reth-v2.8.1 migration: `map_header` is new upstream after reth 1.8.1 and lists every
+        // `ChainSpec` field; the two staking fields 481897eba added are carried over unchanged.
         let Self {
             chain,
             genesis,
@@ -794,6 +813,8 @@ impl<H: BlockHeader> ChainSpec<H> {
             base_fee_params,
             prune_delete_limit,
             blob_params,
+            staking_contract_address,
+            staking_activation_time,
         } = self;
         ChainSpec {
             chain,
@@ -805,6 +826,8 @@ impl<H: BlockHeader> ChainSpec<H> {
             base_fee_params,
             prune_delete_limit,
             blob_params,
+            staking_contract_address,
+            staking_activation_time,
         }
     }
 }
@@ -934,6 +957,8 @@ impl From<Genesis> for ChainSpec {
             paris_block_and_final_difficulty,
             deposit_contract,
             blob_params,
+            staking_contract_address: Some(address!("0xea224dBB52F57752044c0C86aD50930091F561B9")),
+            staking_activation_time: 1767830400,
             ..Default::default()
         }
     }
@@ -1265,6 +1290,14 @@ impl From<&Arc<ChainSpec>> for ChainSpecBuilder {
 impl<H: BlockHeader> EthExecutorSpec for ChainSpec<H> {
     fn deposit_contract_address(&self) -> Option<Address> {
         self.deposit_contract.map(|deposit_contract| deposit_contract.address)
+    }
+
+    fn staking_contract_address(&self) -> Option<Address> {
+        self.staking_contract_address
+    }
+
+    fn is_staking_activate_at_timestamp(&self, timestamp: u64) -> bool {
+        self.staking_activation_time <= timestamp
     }
 }
 

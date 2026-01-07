@@ -152,16 +152,23 @@ impl core::fmt::Display for DisplayHardforks {
 
 impl DisplayHardforks {
     /// Creates a new [`DisplayHardforks`] from an iterator of hardforks.
-    pub fn new<'a, I>(hardforks: I) -> Self
+    pub fn new<'a, I>(hardforks: I, staking_activation_time: u64) -> Self
     where
         I: IntoIterator<Item = (&'a dyn Hardfork, ForkCondition)>,
     {
         // Delegate to with_meta by mapping the iterator to include None for metadata
-        Self::with_meta(hardforks.into_iter().map(|(fork, condition)| (fork, condition, None)))
+        Self::with_meta(
+            hardforks.into_iter().map(|(fork, condition)| (fork, condition, None)),
+            staking_activation_time,
+        )
     }
 
     /// Creates a new [`DisplayHardforks`] from an iterator of hardforks with optional metadata.
-    pub fn with_meta<'a, I>(hardforks: I) -> Self
+    // reth-v2.8.1 migration: 481897eba added `staking_activation_time` to `new` and appended the
+    // `StakingActivation` entry there. Upstream moved the body of `new` into this function (which
+    // `new` now delegates to and `ChainSpec::display_hardforks` calls directly), so the parameter
+    // and the entry are added here as well.
+    pub fn with_meta<'a, I>(hardforks: I, staking_activation_time: u64) -> Self
     where
         I: IntoIterator<Item = (&'a dyn Hardfork, ForkCondition, Option<String>)>,
     {
@@ -190,6 +197,9 @@ impl DisplayHardforks {
                 ForkCondition::Never => {}
             }
         }
+
+        // reth-v2.8.1 migration: upstream added `metadata` to `DisplayFork`; the 0G entry has none.
+        post_merge.push(DisplayFork { name: String::from("StakingActivation"), activated_at: ForkCondition::Timestamp(staking_activation_time), eip: None, metadata: None });
 
         Self { pre_merge, with_merge, post_merge }
     }

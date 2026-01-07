@@ -1320,6 +1320,9 @@ mod tests {
             parent_beacon_block_root: None,
             ommers: &[],
             withdrawals: None,
+            // reth-v2.8.1 migration: upstream test fixture; 481897eba's alloy-evm adds
+            // `timestamp`, set to the block env's timestamp (the default 0 in `evm_env`).
+            timestamp: 0,
             extra_data: Bytes::new(),
             tx_count_hint: None,
             slot_number: None,
