@@ -193,4 +193,15 @@ impl DisplayHardforks {
 
         Self { pre_merge, with_merge, post_merge }
     }
+
+    /// Adds the 0G staking activation timestamp to the displayed fork schedule.
+    pub fn with_staking_activation(mut self, timestamp: u64) -> Self {
+        self.post_merge.push(DisplayFork {
+            name: String::from("StakingActivation"),
+            activated_at: ForkCondition::Timestamp(timestamp),
+            eip: None,
+            metadata: None,
+        });
+        self
+    }
 }

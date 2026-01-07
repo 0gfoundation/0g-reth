@@ -137,6 +137,8 @@ pub static MAINNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
             (mainnet::MAINNET_BPO1_TIMESTAMP, BlobParams::bpo1()),
             (mainnet::MAINNET_BPO2_TIMESTAMP, BlobParams::bpo2()),
         ]),
+        staking_contract_address: None,
+        staking_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -172,6 +174,8 @@ pub static SEPOLIA: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
             (sepolia::SEPOLIA_BPO1_TIMESTAMP, BlobParams::bpo1()),
             (sepolia::SEPOLIA_BPO2_TIMESTAMP, BlobParams::bpo2()),
         ]),
+        staking_contract_address: None,
+        staking_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -202,6 +206,8 @@ pub static HOLESKY: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
             (holesky::HOLESKY_BPO1_TIMESTAMP, BlobParams::bpo1()),
             (holesky::HOLESKY_BPO2_TIMESTAMP, BlobParams::bpo2()),
         ]),
+        staking_contract_address: None,
+        staking_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -234,6 +240,8 @@ pub static HOODI: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
             (hoodi::HOODI_BPO1_TIMESTAMP, BlobParams::bpo1()),
             (hoodi::HOODI_BPO2_TIMESTAMP, BlobParams::bpo2()),
         ]),
+        staking_contract_address: None,
+        staking_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -441,6 +449,12 @@ pub struct ChainSpec<H: BlockHeader = Header> {
 
     /// The settings passed for blob configurations for specific hardforks.
     pub blob_params: BlobScheduleBlobParams,
+
+    /// The staking contract address
+    pub staking_contract_address: Option<Address>,
+
+    /// Unix timestamp at which 0G staking activates.
+    pub staking_activation_time: u64,
 }
 
 impl<H: BlockHeader> Default for ChainSpec<H> {
@@ -455,6 +469,8 @@ impl<H: BlockHeader> Default for ChainSpec<H> {
             base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
             prune_delete_limit: MAINNET_PRUNE_DELETE_LIMIT,
             blob_params: Default::default(),
+            staking_contract_address: None,
+            staking_activation_time: 0,
         }
     }
 }
@@ -598,6 +614,7 @@ impl<H: BlockHeader> ChainSpec<H> {
         });
 
         DisplayHardforks::with_meta(hardforks_with_meta)
+            .with_staking_activation(self.staking_activation_time)
     }
 
     /// Get the fork id for the given hardfork.
@@ -942,6 +959,8 @@ impl From<Genesis> for ChainSpec {
             paris_block_and_final_difficulty,
             deposit_contract,
             blob_params,
+            staking_contract_address: Some(address!("0xea224dBB52F57752044c0C86aD50930091F561B9")),
+            staking_activation_time: 1767830400,
             ..Default::default()
         }
     }
@@ -1261,6 +1280,7 @@ impl<H: BlockHeader> EthExecutorSpec for ChainSpec<H> {
     fn deposit_contract_address(&self) -> Option<Address> {
         self.deposit_contract.map(|deposit_contract| deposit_contract.address)
     }
+
 }
 
 /// `PoS` deposit contract details.
