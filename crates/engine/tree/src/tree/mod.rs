@@ -3236,10 +3236,9 @@ where
             // requests from its single `sealed_header_by_hash` lookup (memory first, then DB).
             // Upstream split that lookup into this in-memory check and the DB check below, so the
             // same code is applied to both. The header was looked up by this block's hash, so
-            // `header.num_hash()` is `block_num_hash` here.
+            // `header.num_hash()` is `block_num_hash` here. 7fc52f8887 removed the debug log.
             // revert if return provider error
             let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
-            info!("[Debug] InsertPayloadOk AlreadySeen, requests={}", requests.len());
 
             return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: block_num_hash, requests }));
         }
@@ -3258,7 +3257,6 @@ where
 
                     // revert if return provider error
                     let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
-                    info!("[Debug] InsertPayloadOk AlreadySeen, requests={}", requests.len());
 
                     return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: header.num_hash(), requests }));
                 }
@@ -3352,10 +3350,10 @@ where
         // `executed.execution_output.requests.first().unwrap_or(&Requests::default()).clone().take()`
         // and `executed.block.recovered_block.num_hash()`. Upstream's `ExecutedBlock` now holds
         // this block's `BlockExecutionOutput` (one `Requests`, not a per-block list) and the
-        // recovered block directly.
+        // recovered block directly. 7fc52f8887 removed the debug log that followed.
         let requests = executed.execution_output.requests.clone().take();
         let head = executed.recovered_block.num_hash();
-        info!("[Debug] InsertPayloadOk Inserted, block={:?}, head={:?}, requests={}", &block_num_hash, &head, requests.len());
+
 
         // emit insert event
         let elapsed = start.elapsed();

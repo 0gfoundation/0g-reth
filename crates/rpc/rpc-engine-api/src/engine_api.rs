@@ -237,8 +237,6 @@ where
         &self,
         payload: PayloadT::ExecutionData,
     ) -> EngineApiResult<PayloadStatus> {
-        info!("[Debug] EngineApi new_payload_v4, payload={:?}", &payload);
-
         let payload_or_attrs = PayloadOrAttributes::<
             '_,
             PayloadT::ExecutionData,
@@ -248,14 +246,9 @@ where
             .validator
             .validate_version_specific_fields(EngineApiMessageVersion::V4, payload_or_attrs)?;
 
-        // reth-v2.8.1 migration: 0b47d9ef1 bound the result to log it before returning. Upstream
-        // dropped the `.inspect(|_| self.inner.on_new_payload_response())` from this chain, so it
-        // is not added back.
-        let result = self.inner.beacon_consensus.new_payload(payload).await?;
-
-        info!("[Debug] EngineApi new_payload_v4, result={:?}", &result);
-
-        Ok(result)
+        // reth-v2.8.1 migration: 7fc52f8887 removed the debug log and returned the call directly
+        // again, which is upstream's line (without the `.inspect(...)` upstream dropped).
+        Ok(self.inner.beacon_consensus.new_payload(payload).await?)
     }
 
     /// Metrics version of `new_payload_v4`
