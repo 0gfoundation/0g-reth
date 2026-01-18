@@ -21,7 +21,6 @@ use reth_primitives_traits::{
 };
 use reth_storage_api::StateProvider;
 pub use reth_storage_errors::provider::ProviderError;
-use reth_tracing::tracing::info;
 use reth_trie_common::{updates::TrieUpdates, HashedPostState};
 use revm::{
     database::{states::bundle_state::BundleRetention, BundleState, State},
@@ -554,8 +553,6 @@ where
         })?;
 
         let block = RecoveredBlock::new_unhashed(block, senders);
-
-        info!("[Debug] BlockBuilder finish, block={:#?}", block);
 
         Ok(BlockBuilderOutcome {
             execution_result: result,
