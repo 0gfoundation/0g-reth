@@ -523,8 +523,6 @@ where
 
         let block = RecoveredBlock::new_unhashed(block, senders);
 
-        info!("[Debug] BlockBuilder finish, block={:#?}", block);
-
         Ok(BlockBuilderOutcome { execution_result: result, hashed_state, trie_updates, block })
     }
 
