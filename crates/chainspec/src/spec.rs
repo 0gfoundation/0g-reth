@@ -747,7 +747,8 @@ impl From<Genesis> for ChainSpec {
             deposit_contract,
             blob_params,
             staking_contract_address: Some(address!("0xea224dBB52F57752044c0C86aD50930091F561B9")),
-            staking_activation_time: 1767830400,
+            staking_activation_time: 1769558400, // 2026-01-28 0:00:00 UTC [Mainnet Config]
+            // staking_activation_time: 1767830400, // 2026-01-08 0:00:00 UTC [Testnet Config]
             ..Default::default()
         }
     }
