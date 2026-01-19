@@ -691,8 +691,8 @@ revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = 
 revm-handler = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-handler" }
 revm-precompile = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-precompile" }
 
-# reth-v2.8.1 migration: the original pinned alloy-evm `c3b6832e` ("feat: spec add staking
-# activation time"), replayed as `5fdc3821`.
+# reth-v2.8.1 migration: the original pinned alloy-evm `8b7799f7` (merge PR #9, same tree as
+# `c3b6832e` "feat: spec add staking activation time"), replayed as `5fdc3821`.
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "5fdc38216e6de230259717b74f51a08b860e310b" }
 
 # Patch alloy 1.0.35 with 0g-alloy
