@@ -726,7 +726,7 @@ revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "
 revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-database-interface" }
 op-revm = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "op-revm" }
 
-alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "c3b6832e3adc0dab519be211948024e8e74db59b" }
+alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "8b7799f7449766fafcbd31a128d1ca61987ffe90" }
 
 # Patch alloy 1.0.35 with 0g-alloy
 alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-consensus" }
