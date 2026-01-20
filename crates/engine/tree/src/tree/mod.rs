@@ -3084,8 +3084,6 @@ where
         self.metrics.engine.executed_blocks.set(self.state.tree_state.block_count() as f64);
 
         let head = executed.block.recovered_block.num_hash();
-        info!("[Debug] InsertPayloadOk Inserted, block={:?}, head={:?}", &block_num_hash, &head);
-
         // emit insert event
         let elapsed = start.elapsed();
         let engine_event = if is_fork {

@@ -237,8 +237,6 @@ where
         &self,
         payload: PayloadT::ExecutionData,
     ) -> EngineApiResult<PayloadStatus> {
-        info!("[Debug] EngineApi new_payload_v4, payload={:?}", &payload);
-
         let payload_or_attrs = PayloadOrAttributes::<
             '_,
             PayloadT::ExecutionData,
