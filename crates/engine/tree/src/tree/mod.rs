@@ -2348,8 +2348,7 @@ where
 
                 // revert if return provider error
                 let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
-                info!("[Debug] InsertPayloadOk AlreadySeen, requests={}", requests.len());
-
+                              
                 return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: header.num_hash(), requests }))
             }
             _ => {}
@@ -2411,8 +2410,7 @@ where
 
         let requests = executed.execution_output.requests.first().unwrap_or(&Requests::default()).clone().take();
         let head = executed.block.recovered_block.num_hash();
-        info!("[Debug] InsertPayloadOk Inserted, block={:?}, head={:?}, requests={}", &block_num_hash, &head, requests.len());
-
+        
         // emit insert event
         let elapsed = start.elapsed();
         let engine_event = if is_fork {

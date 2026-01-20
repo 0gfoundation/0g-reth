@@ -245,8 +245,6 @@ where
         &self,
         payload: PayloadT::ExecutionData,
     ) -> EngineApiResult<PayloadStatus> {
-        info!("[Debug] EngineApi new_payload_v4, payload={:?}", &payload);
-
         let payload_or_attrs = PayloadOrAttributes::<
             '_,
             PayloadT::ExecutionData,
@@ -256,16 +254,12 @@ where
             .validator
             .validate_version_specific_fields(EngineApiMessageVersion::V4, payload_or_attrs)?;
 
-        let result = self
+        Ok(self
             .inner
             .beacon_consensus
             .new_payload(payload)
             .await
-            .inspect(|_| self.inner.on_new_payload_response())?;
-
-        info!("[Debug] EngineApi new_payload_v4, result={:?}", &result);
-
-        Ok(result)
+            .inspect(|_| self.inner.on_new_payload_response())?)
     }
 
     /// Metrics version of `new_payload_v4`
