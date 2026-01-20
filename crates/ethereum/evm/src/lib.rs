@@ -252,6 +252,10 @@ where
             parent_beacon_block_root: block.header().parent_beacon_block_root,
             ommers: &block.body().ommers,
             withdrawals: block.body().withdrawals.as_ref().map(|w| Cow::Borrowed(w.as_slice())),
+            // reth-v2.8.1 migration: the original called `block.header().timestamp()` through the
+            // `BlockHeader` trait, which this file no longer imports upstream; the `Header` field
+            // is read directly, like the neighbouring fields.
+            timestamp: block.header().timestamp,
             extra_data: block.header().extra_data.clone(),
             slot_number: block.header().slot_number,
         })
@@ -268,6 +272,7 @@ where
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             ommers: &[],
             withdrawals: attributes.withdrawals.map(|w| Cow::Owned(w.into_inner())),
+            timestamp: attributes.timestamp,
             extra_data: attributes.extra_data,
             slot_number: attributes.slot_number,
         })
@@ -395,6 +400,7 @@ where
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             ommers: &[],
             withdrawals: payload.payload.withdrawals().map(|w| Cow::Borrowed(w.as_slice())),
+            timestamp: payload.payload.timestamp(),
             extra_data: payload.payload.as_v1().extra_data.clone(),
             slot_number: payload.payload.as_v4().map(|v4| v4.slot_number),
         })

@@ -915,10 +915,6 @@ where
             let _ = valid_block_tx.send(());
         }
 
-        // reth-v2.8.1 migration: c536004cf added this log right before the executed block was
-        // built; upstream now builds it in `spawn_deferred_trie_task` below.
-        info!("[Debug] Validate block with state, block={:?}, output={:?}, hashed_state={:?}", &block, &output, &hashed_state);
-
         // The payload's raw bytes are already bound to this header: payload-to-block conversion
         // and downloaded-sidecar verification both check their hash against it, so pairing them
         // with the BAL this execution produced is sound. The zip leaves the BAL unset for a

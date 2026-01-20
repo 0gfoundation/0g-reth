@@ -461,6 +461,10 @@ where
             parent_beacon_block_root: last_seg.ctx.parent_beacon_block_root,
             ommers: last_seg.ctx.ommers,
             withdrawals: last_seg.ctx.withdrawals.clone(),
+            // reth-v2.8.1 migration: `reth-bb` is new upstream after reth 1.8.1. 481897eba's
+            // alloy-evm (`c3b6832e`, replayed as `5fdc3821`) adds `timestamp` to the ctx; it is
+            // copied from the same last segment as every other field here.
+            timestamp: last_seg.ctx.timestamp,
             extra_data: last_seg.ctx.extra_data.clone(),
             tx_count_hint: last_seg.ctx.tx_count_hint,
             slot_number: last_seg.ctx.slot_number,
