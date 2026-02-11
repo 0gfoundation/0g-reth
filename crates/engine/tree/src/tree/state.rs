@@ -101,6 +101,30 @@ impl<N: NodePrimitives> TreeState<N> {
         self.blocks_by_hash.get(hash).map(|b| b.execution_outcome().requests.first().unwrap_or(&Requests::default()).clone())
     }
 
+    /// Finds an already-executed block by (block_number, parent_hash).
+    ///
+    /// This is a fallback for the PBFT consensus model where delayed execution causes
+    /// the block hash to change after execution (because `gas_used` is updated from 0
+    /// to the actual value). In this scenario, the CL's proposal hash differs from the
+    /// EL's post-execution hash, so the standard hash-based lookup fails.
+    ///
+    /// Under PBFT, the (block_number, parent_hash) pair uniquely identifies a block:
+    /// - `block_number` is deterministic (parent_number + 1)
+    /// - `parent_hash` is agreed upon by consensus
+    /// - The proposer determines the transactions, which remain the same across retries
+    ///
+    /// Returns the executed block's hash if found (the post-execution hash).
+    pub(crate) fn executed_block_by_number_and_parent(
+        &self,
+        block_number: BlockNumber,
+        parent_hash: B256,
+    ) -> Option<&ExecutedBlockWithTrieUpdates<N>> {
+        self.blocks_by_number
+            .get(&block_number)?
+            .iter()
+            .find(|b| b.recovered_block().parent_hash() == parent_hash)
+    }
+
     /// Returns all available blocks for the given hash that lead back to the canonical chain, from
     /// newest to oldest. And the parent hash of the oldest block that is missing from the buffer.
     ///
