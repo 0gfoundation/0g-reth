@@ -2613,17 +2613,17 @@ where
             "Invalid block contains {} transactions",
             block.body().transactions().len()
         );
-        for (idx, tx) in block.body().transactions().iter().enumerate() {
-            warn!(
-                target: "engine::tree",
-                invalid_hash=%block.hash(),
-                tx_index=idx,
-                tx_hash=%tx.tx_hash(),
-                tx_nonce=tx.nonce(),
-                tx_gas_limit=tx.gas_limit(),
-                "Transaction in invalid block"
-            );
-        }
+        // for (idx, tx) in block.body().transactions().iter().enumerate() {
+        //     warn!(
+        //         target: "engine::tree",
+        //         invalid_hash=%block.hash(),
+        //         tx_index=idx,
+        //         tx_hash=%tx.tx_hash(),
+        //         tx_nonce=tx.nonce(),
+        //         tx_gas_limit=tx.gas_limit(),
+        //         "Transaction in invalid block"
+        //     );
+        // }
 
         let latest_valid_hash = self.latest_valid_hash_for_invalid_payload(block.parent_hash())?;
 

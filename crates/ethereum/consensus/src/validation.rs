@@ -31,16 +31,16 @@ where
         "Starting to process receipts for cumulative_gas_used calculation"
     );
 
-    for (idx, receipt) in receipts.iter().enumerate() {
-        tracing::info!(
-            target: "consensus::validation",
-            block_number = block.header().number(),
-            receipt_index = idx,
-            cumulative_gas_used = receipt.cumulative_gas_used(),
-            success = receipt.status(),
-            "Receipt details during cumulative_gas_used calculation"
-        );
-    }
+    // for (idx, receipt) in receipts.iter().enumerate() {
+    //     tracing::info!(
+    //         target: "consensus::validation",
+    //         block_number = block.header().number(),
+    //         receipt_index = idx,
+    //         cumulative_gas_used = receipt.cumulative_gas_used(),
+    //         success = receipt.status(),
+    //         "Receipt details during cumulative_gas_used calculation"
+    //     );
+    // }
 
     // Check if gas used matches the value set in header.
     let cumulative_gas_used =
