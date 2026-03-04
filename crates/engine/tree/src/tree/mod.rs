@@ -792,6 +792,30 @@ where
 
         let block_hash = num_hash.hash;
 
+        // reth-v2.8.1 migration: e262f813a put this check right before the invalid-ancestor
+        // lookup (`lowest_buffered_ancestor_or`), which upstream moved into
+        // `find_invalid_ancestor` below. Upstream's version also checks the block itself first,
+        // but then converts the payload and re-records it as invalid; 0G's early return without
+        // conversion is kept in front of it, as in the original.
+        // if this block hash was previously marked invalid, return INVALID immediately.
+        // This prevents infinite loops when the CL retries a payload
+        // that Reth already validated and rejected, but the CL timed out before receiving invalid resp.
+        if let Some(invalid) = self.state.invalid_headers.get(&block_hash) {
+            warn!(
+                target: "engine::tree",
+                %block_hash,
+                block_number = %num_hash.number,
+                "reject known invalid block"
+            );
+            // reth-v2.8.1 migration: the original used a bare `?`. Upstream's `on_new_payload`
+            // error type no longer converts from `ProviderError`, so it goes through
+            // `InsertBlockFatalError` like upstream's other provider calls in this path.
+            let status = self
+                .prepare_invalid_response(invalid.parent)
+                .map_err(InsertBlockFatalError::from)?;
+            return Ok(TreeOutcome::new(status))
+        }
+
         // Check for invalid ancestors
         if let Some(invalid) = self.find_invalid_ancestor(&payload) {
             let status = self.handle_invalid_ancestor_payload(payload, invalid)?;
@@ -3262,6 +3286,30 @@ where
                 }
                 Ok(None) => {}
             }
+        }
+
+        // When the CL times out and retries with the same payload
+        // we look up the block by (number, parent_hash) to find the previously executed result,
+        // avoiding redundant re-execution.
+        if let Some(executed) = self.state.tree_state.executed_block_by_number_and_parent(
+            block_num_hash.number,
+            block_id.parent,
+        ) {
+            let executed_hash = executed.recovered_block().hash();
+
+            convert_to_block(self, input)?;
+
+            // Return the execution result using the post-execution hash, so the CL
+            // receives the correct `latest_valid_hash` for FCU.
+            let requests = self.state.tree_state
+                .execution_requests_by_hash(&executed_hash)
+                .unwrap_or_default()
+                .take();
+
+            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
+                head: BlockNumHash::new(block_num_hash.number, executed_hash),
+                requests,
+            }))
         }
 
         // Ensure that the parent state is available.
