@@ -545,6 +545,20 @@ where
         self.emit_event(EngineApiEvent::BeaconConsensus(engine_event));
 
         let block_hash = num_hash.hash;
+        // if this block hash was previously marked invalid, return INVALID immediately.
+        // This prevents infinite loops when the CL retries a payload
+        // that Reth already validated and rejected, but the CL timed out before receiving invalid resp.
+        if let Some(invalid) = self.state.invalid_headers.get(&block_hash) {
+            warn!(
+                target: "engine::tree",
+                %block_hash,
+                block_number = %num_hash.number,
+                "reject known invalid block"
+            );
+            let status = self.prepare_invalid_response(invalid.parent)?;
+            return Ok(TreeOutcome::new(status))
+        }
+
         let mut lowest_buffered_ancestor = self.lowest_buffered_ancestor_or(block_hash);
         if lowest_buffered_ancestor == block_hash {
             lowest_buffered_ancestor = parent_hash;
@@ -2353,6 +2367,30 @@ where
             }
             _ => {}
         };
+
+        // When the CL times out and retries with the same payload
+        // we look up the block by (number, parent_hash) to find the previously executed result,
+        // avoiding redundant re-execution.
+        if let Some(executed) = self.state.tree_state.executed_block_by_number_and_parent(
+            block_num_hash.number,
+            block_id.parent,
+        ) {
+            let executed_hash = executed.recovered_block().hash();
+
+            convert_to_block(self, input)?;
+
+            // Return the execution result using the post-execution hash, so the CL
+            // receives the correct `latest_valid_hash` for FCU.
+            let requests = self.state.tree_state
+                .execution_requests_by_hash(&executed_hash)
+                .unwrap_or_default()
+                .take();
+
+            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
+                head: BlockNumHash::new(block_num_hash.number, executed_hash),
+                requests,
+            }))
+        }
 
         // Ensure that the parent state is available.
         match self.state_provider_builder(block_id.parent) {
