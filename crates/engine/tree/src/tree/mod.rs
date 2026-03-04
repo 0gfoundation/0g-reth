@@ -788,7 +788,6 @@ where
         self.emit_event(EngineApiEvent::BeaconConsensus(engine_event));
 
         let block_hash = num_hash.hash;
-
         // Check for invalid ancestors
         if let Some(invalid) = self.find_invalid_ancestor(&payload) {
             let status = self.handle_invalid_ancestor_payload(payload, invalid)?;
@@ -2999,6 +2998,24 @@ where
                 }
                 Ok(None) => {}
             }
+        }
+
+        // When the CL times out and retries with the same payload
+        // we look up the block by (number, parent_hash) to find the previously executed result,
+        // avoiding redundant re-execution.
+        if let Some(executed) = self.state.tree_state.executed_block_by_number_and_parent(
+            block_num_hash.number,
+            block_id.parent,
+        ) {
+            let executed_hash = executed.recovered_block().hash();
+
+            convert_to_block(self, input)?;
+
+            // Return the execution result using the post-execution hash, so the CL
+            // receives the correct `latest_valid_hash` for FCU.
+            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
+                head: BlockNumHash::new(block_num_hash.number, executed_hash),
+            }))
         }
 
         // Ensure that the parent state is available.
