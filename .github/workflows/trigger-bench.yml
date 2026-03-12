@@ -1,0 +1,93 @@
+# Copy this file to: 0g-reth/.github/workflows/trigger-bench.yml
+name: Trigger Benchmark
+
+on:
+  pull_request:
+    branches: [main, dev-*]
+    types: [opened]                      # Only on PR creation (notify reviewers)
+    paths:
+      - 'crates/**'
+      - '!**.md'
+  pull_request_review:
+    types: [submitted]                   # On review submitted (check if approved)
+  workflow_dispatch: {}
+
+jobs:
+  # ---- Job 1: Notify reviewers when PR is opened ----
+  notify-reviewers:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack @mention
+        env:
+          SLACK_REVIEW_WEBHOOK_URL: ${{ secrets.SLACK_REVIEW_WEBHOOK_URL }}
+          SLACK_REVIEWERS: ${{ secrets.SLACK_REVIEWERS }}
+        run: |
+          if [ -z "$SLACK_REVIEW_WEBHOOK_URL" ]; then
+            echo "⚠️ SLACK_REVIEW_WEBHOOK_URL not set, skipping"
+            exit 0
+          fi
+          MENTIONS=""
+          if [ "$SLACK_REVIEWERS" = "@channel" ]; then
+            MENTIONS="<!channel> "
+          elif [ "$SLACK_REVIEWERS" = "@here" ]; then
+            MENTIONS="<!here> "
+          else
+            for uid in $SLACK_REVIEWERS; do
+              MENTIONS="${MENTIONS}<@${uid}> "
+            done
+          fi
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          PR_NUM="${{ github.event.pull_request.number }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          AUTHOR="${{ github.actor }}"
+          REPO="${{ github.repository }}"
+          curl -s -X POST "$SLACK_REVIEW_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"'"${MENTIONS}"'\n📝 *New PR needs review*\nRepo: `'"${REPO}"'`\nPR: <'"${PR_URL}"'|#'"${PR_NUM}"' '"${PR_TITLE}"'>\nAuthor: '"${AUTHOR}"'"}'
+
+  # ---- Job 2: Trigger bench when PR is approved ----
+  trigger-bench:
+    if: >-
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to 0g-bench-ci
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.BENCH_DISPATCH_PAT }}
+          repository: 0gfoundation/0g-bench-ci
+          event-type: reth-push
+          client-payload: |
+            {
+              "source_repo": "0g-reth",
+              "branch": "${{ github.event.pull_request.head.ref }}",
+              "commit": "${{ github.event.pull_request.head.sha }}",
+              "author": "${{ github.event.pull_request.user.login }}",
+              "pr_number": "${{ github.event.pull_request.number }}",
+              "pr_url": "${{ github.event.pull_request.html_url }}",
+              "pr_title": "${{ github.event.pull_request.title }}"
+            }
+
+  # ---- Job 3: Manual trigger (for testing) ----
+  trigger-bench-manual:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to 0g-bench-ci
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.BENCH_DISPATCH_PAT }}
+          repository: 0gfoundation/0g-bench-ci
+          event-type: reth-push
+          client-payload: |
+            {
+              "source_repo": "0g-reth",
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}",
+              "author": "${{ github.actor }}",
+              "pr_number": "",
+              "pr_url": "",
+              "pr_title": ""
+            }
