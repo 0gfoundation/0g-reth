@@ -8162,7 +8162,7 @@ dependencies = [
 [[package]]
 name = "reth-codecs"
 version = "0.8.2"
-source = "git+https://github.com/0gfoundation/reth-core?rev=354d54348691be5dbeda2608a2ab66ab06f35bfa#354d54348691be5dbeda2608a2ab66ab06f35bfa"
+source = "git+https://github.com/0gfoundation/reth-core?rev=3fb341412ffcec12ef70d1eefe657fe5c83a588e#3fb341412ffcec12ef70d1eefe657fe5c83a588e"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8182,7 +8182,7 @@ dependencies = [
 [[package]]
 name = "reth-codecs-derive"
 version = "0.8.2"
-source = "git+https://github.com/0gfoundation/reth-core?rev=354d54348691be5dbeda2608a2ab66ab06f35bfa#354d54348691be5dbeda2608a2ab66ab06f35bfa"
+source = "git+https://github.com/0gfoundation/reth-core?rev=3fb341412ffcec12ef70d1eefe657fe5c83a588e#3fb341412ffcec12ef70d1eefe657fe5c83a588e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9946,7 +9946,7 @@ dependencies = [
 [[package]]
 name = "reth-primitives-traits"
 version = "0.8.2"
-source = "git+https://github.com/0gfoundation/reth-core?rev=354d54348691be5dbeda2608a2ab66ab06f35bfa#354d54348691be5dbeda2608a2ab66ab06f35bfa"
+source = "git+https://github.com/0gfoundation/reth-core?rev=3fb341412ffcec12ef70d1eefe657fe5c83a588e#3fb341412ffcec12ef70d1eefe657fe5c83a588e"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -10478,7 +10478,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-traits"
 version = "0.8.2"
-source = "git+https://github.com/0gfoundation/reth-core?rev=354d54348691be5dbeda2608a2ab66ab06f35bfa#354d54348691be5dbeda2608a2ab66ab06f35bfa"
+source = "git+https://github.com/0gfoundation/reth-core?rev=3fb341412ffcec12ef70d1eefe657fe5c83a588e#3fb341412ffcec12ef70d1eefe657fe5c83a588e"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -11067,7 +11067,7 @@ dependencies = [
 [[package]]
 name = "reth-zstd-compressors"
 version = "0.8.2"
-source = "git+https://github.com/0gfoundation/reth-core?rev=354d54348691be5dbeda2608a2ab66ab06f35bfa#354d54348691be5dbeda2608a2ab66ab06f35bfa"
+source = "git+https://github.com/0gfoundation/reth-core?rev=3fb341412ffcec12ef70d1eefe657fe5c83a588e#3fb341412ffcec12ef70d1eefe657fe5c83a588e"
 dependencies = [
  "zstd 0.13.3",
 ]

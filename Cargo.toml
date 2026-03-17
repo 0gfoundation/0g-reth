@@ -735,14 +735,15 @@ alloy-transport-ws = { git = "https://github.com/0gfoundation/0g-alloy", rev = "
 alloy-tx-macros = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-tx-macros" }
 
 # reth-v2.8.1 migration: the original changed `crates/primitives-traits` in this repository
-# (`BlockHeader` gains the `BlockHeaderMut` supertrait). reth v2.8.1 takes that crate from
-# reth-core; the change is replayed there as `354d5434`, so the 5 reth-core crates reth v2.8.1
-# resolves are patched to it.
-reth-codecs = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
-reth-codecs-derive = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
-reth-primitives-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
-reth-rpc-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
-reth-zstd-compressors = { git = "https://github.com/0gfoundation/reth-core", rev = "354d54348691be5dbeda2608a2ab66ab06f35bfa" }
+# (87f2d4574: `BlockHeader` gains the `BlockHeaderMut` supertrait; 88e95db1c: `SealedHeader`'s
+# test-utils `set_state_root` calls `TestHeader::set_state_root` explicitly). reth v2.8.1 takes
+# that crate from reth-core; the changes are replayed there as `354d5434` and `3fb34141`, so the
+# 5 reth-core crates reth v2.8.1 resolves are patched to the latter.
+reth-codecs = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
+reth-codecs-derive = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
+reth-primitives-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
+reth-rpc-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
+reth-zstd-compressors = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
 
 # revm = { path = "../revm/crates/revm" }
 # revm-bytecode = { path = "../revm/crates/bytecode" }
