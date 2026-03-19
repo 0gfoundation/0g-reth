@@ -48,6 +48,17 @@ pub struct TreeState<N: NodePrimitives = EthPrimitives> {
     ///
     /// Contains the block number for easy removal.
     pub(crate) persisted_trie_updates: HashMap<B256, (BlockNumber, Arc<TrieUpdates>)>,
+    /// Maps pre-execution payload hash → post-execution block hash.
+    ///
+    /// In 0g's PBFT model, `gas_used` is modified during execution (from 0 to the actual
+    /// value), causing the block hash to change. When the CL times out and retries the same
+    /// payload, the hash-based lookup (`blocks_by_hash`) fails because the stored block has
+    /// a different hash. This map enables O(1) dedup by the original payload hash.
+    ///
+    /// Entries are added after execution and removed in `remove_by_hash()` when blocks are
+    /// pruned (finalization, persistence, or sidechain cleanup). Map size equals the number
+    /// of in-memory blocks whose hash changed during execution.
+    pub(crate) payload_to_executed_hash: HashMap<B256, B256>,
     /// Currently tracked canonical head of the chain.
     pub(crate) current_canonical_head: BlockNumHash,
     /// The engine API variant of this handler
@@ -63,6 +74,7 @@ impl<N: NodePrimitives> TreeState<N> {
             current_canonical_head,
             parent_to_child: HashMap::default(),
             persisted_trie_updates: HashMap::default(),
+            payload_to_executed_hash: HashMap::default(),
             engine_kind,
         }
     }
@@ -101,28 +113,19 @@ impl<N: NodePrimitives> TreeState<N> {
         self.blocks_by_hash.get(hash).map(|b| b.execution_outcome().requests.first().unwrap_or(&Requests::default()).clone())
     }
 
-    /// Finds an already-executed block by (block_number, parent_hash).
+    /// Looks up the post-execution block hash for a given pre-execution payload hash.
     ///
-    /// This is a fallback for the PBFT consensus model where delayed execution causes
-    /// the block hash to change after execution (because `gas_used` is updated from 0
-    /// to the actual value). In this scenario, the CL's proposal hash differs from the
-    /// EL's post-execution hash, so the standard hash-based lookup fails.
+    /// In 0g's PBFT model, `gas_used` is modified during execution, changing the block
+    /// hash. When the CL times out and retries the same payload, this map provides an
+    /// O(1) lookup from the original payload hash to the executed block hash, avoiding
+    /// redundant re-execution.
     ///
-    /// Under PBFT, the (block_number, parent_hash) pair uniquely identifies a block:
-    /// - `block_number` is deterministic (parent_number + 1)
-    /// - `parent_hash` is agreed upon by consensus
-    /// - The proposer determines the transactions, which remain the same across retries
-    ///
-    /// Returns the executed block's hash if found (the post-execution hash).
-    pub(crate) fn executed_block_by_number_and_parent(
-        &self,
-        block_number: BlockNumber,
-        parent_hash: B256,
-    ) -> Option<&ExecutedBlockWithTrieUpdates<N>> {
-        self.blocks_by_number
-            .get(&block_number)?
-            .iter()
-            .find(|b| b.recovered_block().parent_hash() == parent_hash)
+    /// Each payload has a unique pre-execution hash (determined by its full content),
+    /// so this correctly distinguishes:
+    /// - CL retries of the same payload (same hash → hit → skip)
+    /// - Different proposers' payloads (different hash → miss → execute)
+    pub(crate) fn executed_hash_by_payload_hash(&self, payload_hash: &B256) -> Option<&B256> {
+        self.payload_to_executed_hash.get(payload_hash)
     }
 
     /// Returns all available blocks for the given hash that lead back to the canonical chain, from
@@ -203,6 +206,9 @@ impl<N: NodePrimitives> TreeState<N> {
                 }
             }
         }
+
+        // Remove any payload hash mapping that points to this executed block hash.
+        self.payload_to_executed_hash.retain(|_, v| *v != hash);
 
         Some((executed, children))
     }
