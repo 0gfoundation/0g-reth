@@ -3000,19 +3000,27 @@ where
             }
         }
 
-        // When the CL times out and retries with the same payload
-        // we look up the block by (number, parent_hash) to find the previously executed result,
-        // avoiding redundant re-execution.
-        if let Some(executed) = self.state.tree_state.executed_block_by_number_and_parent(
-            block_num_hash.number,
-            block_id.parent,
-        ) {
-            let executed_hash = executed.recovered_block().hash();
-
+        // When the CL times out and retries the same payload, the hash-based lookup above
+        // fails because 0g modifies gas_used during execution, changing the block hash.
+        // We use payload_to_executed_hash to map the original payload hash to the executed
+        // block hash, enabling O(1) dedup.
+        //
+        // Each payload has a unique pre-execution hash (determined by its full content:
+        // transactions, timestamp, etc.), so this correctly distinguishes:
+        // - CL retries of the same payload (same hash → hit → skip re-execution)
+        // - Different proposers' payloads (different hash → miss → execute normally)
+        //
+        // We return the post-execution hash (executed_hash) as latest_valid_hash.
+        // This is the same hash stored in blocks_by_hash and is what FCU needs to
+        // set the canonical head. All validators executing the same payload produce
+        // the same post-execution hash (same transactions → same gas_used → same hash),
+        // so this is deterministic and consistent, matching geth's behavior where
+        // latestValidHash = newHeader.Hash() (the post-execution hash).
+        if let Some(&executed_hash) = self.state.tree_state
+            .executed_hash_by_payload_hash(&block_num_hash.hash)
+        {
             convert_to_block(self, input)?;
 
-            // Return the execution result using the post-execution hash, so the CL
-            // receives the correct `latest_valid_hash` for FCU.
             return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
                 head: BlockNumHash::new(block_num_hash.number, executed_hash),
             }))
@@ -3101,6 +3109,14 @@ where
         self.metrics.engine.executed_blocks.set(self.state.tree_state.block_count() as f64);
 
         let head = executed.block.recovered_block.num_hash();
+
+        // Record mapping from pre-execution payload hash to post-execution block hash.
+        // This enables CL retry dedup when gas_used modification changes the hash.
+        if block_num_hash.hash != head.hash {
+            self.state.tree_state.payload_to_executed_hash
+                .insert(block_num_hash.hash, head.hash);
+        }
+
         // emit insert event
         let elapsed = start.elapsed();
         let engine_event = if is_fork {
