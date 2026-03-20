@@ -230,7 +230,7 @@ impl<H: crate::test_utils::TestHeader> SealedHeader<H> {
 
     /// Updates the block state root.
     pub fn set_state_root(&mut self, state_root: alloy_primitives::B256) {
-        self.header.set_state_root(state_root);
+        crate::test_utils::TestHeader::set_state_root(&mut self.header, state_root);
     }
 
     /// Updates the block difficulty.
