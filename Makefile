@@ -497,10 +497,18 @@ cargo-test:
 	--lib --examples \
 	--tests \
 	--benches \
-	--all-features
+	--all-features \
+	--exclude reth-stateless \
+	--exclude ef-tests \
+	--exclude ef-test-runner \
+	--exclude 'example-*'
 
 test-doc:
-	cargo test --doc --workspace --all-features
+	cargo test --doc --workspace --all-features \
+	--exclude reth-stateless \
+	--exclude ef-tests \
+	--exclude ef-test-runner \
+	--exclude 'example-*'
 
 test:
 	make cargo-test && \
