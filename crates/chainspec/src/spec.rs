@@ -322,6 +322,7 @@ pub struct ChainSpec {
     /// The staking contract address
     pub staking_contract_address: Option<Address>,
 
+    /// The timestamp at which staking is activated.
     pub staking_activation_time: u64,
 }
 

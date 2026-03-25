@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, BlockHeaderMut, TxReceipt};
-use alloy_eips::{eip7685::Requests, Encodable2718};
-use alloy_primitives::{Bloom, Bytes, B256};
+use alloy_eips::eip7685::Requests;
+use alloy_primitives::{Bloom, B256};
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::ConsensusError;
 use reth_primitives_traits::{Block, GotExpected, Receipt, RecoveredBlock, SealedBlock};
@@ -86,7 +86,7 @@ where
 
     // Validate that the header requests hash matches the calculated requests hash
     if chain_spec.is_prague_active_at_timestamp(block.header().timestamp()) {
-        let Some(header_requests_hash) = block.header().requests_hash() else {
+        let Some(_header_requests_hash) = block.header().requests_hash() else {
             return Err(ConsensusError::RequestsHashMissing)
         };
         let requests_hash = requests.requests_hash();

@@ -269,7 +269,7 @@ impl EthChainSpec for OpChainSpec {
             !EthereumHardfork::VARIANTS.iter().any(|h| h.name() == (*fork).name())
         });
 
-        Box::new(DisplayHardforks::new(op_forks))
+        Box::new(DisplayHardforks::new(op_forks, 0))
     }
 
     fn genesis_header(&self) -> &Self::Header {
