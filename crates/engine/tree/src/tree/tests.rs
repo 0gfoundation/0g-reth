@@ -244,6 +244,7 @@ impl TestHarness {
             current_canonical_head: blocks.last().unwrap().recovered_block().num_hash(),
             parent_to_child,
             persisted_trie_updates: HashMap::default(),
+            payload_to_executed_hash: HashMap::default(),
             engine_kind: EngineApiKind::Ethereum,
         };
 
