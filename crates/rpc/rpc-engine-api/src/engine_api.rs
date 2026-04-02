@@ -31,7 +31,7 @@ use reth_tasks::TaskSpawner;
 use reth_transaction_pool::TransactionPool;
 use std::{sync::Arc, time::Instant};
 use tokio::sync::oneshot;
-use tracing::{debug, trace, warn, info};
+use tracing::{debug, trace, warn};
 
 /// The Engine API response sender.
 pub type EngineApiSender<Ok> = oneshot::Sender<EngineApiResult<Ok>>;

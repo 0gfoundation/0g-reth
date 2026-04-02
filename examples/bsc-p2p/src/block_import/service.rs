@@ -416,8 +416,12 @@ mod tests {
             while let Some(message) = from_engine.recv().await {
                 match message {
                     BeaconEngineMessage::NewPayload { payload: _, tx } => {
-                        tx.send(Ok(PayloadStatus::new(responses.new_payload.clone(), None, vec![])))
-                            .unwrap();
+                        tx.send(Ok(PayloadStatus::new(
+                            responses.new_payload.clone(),
+                            None,
+                            vec![],
+                        )))
+                        .unwrap();
                     }
                     BeaconEngineMessage::ForkchoiceUpdated {
                         state: _,

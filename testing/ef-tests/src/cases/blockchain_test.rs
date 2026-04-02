@@ -215,13 +215,13 @@ fn run_case(case: &BlockchainTest) -> Result<(), Error> {
         .map_err(|err| Error::block_failed(0, err))?;
 
     // Decode blocks
-    let blocks = decode_blocks(&case.blocks)?;
+    let mut blocks = decode_blocks(&case.blocks)?;
 
     let executor_provider = EthEvmConfig::ethereum(chain_spec.clone());
     let mut parent = genesis_block;
     let mut program_inputs = Vec::new();
 
-    for (block_index, block) in blocks.iter().enumerate() {
+    for (block_index, block) in blocks.iter_mut().enumerate() {
         // Note: same as the comment on `decode_blocks` as to why we cannot use block.number
         let block_number = (block_index + 1) as u64;
 

@@ -310,7 +310,8 @@ where
         let sender = pool_tx.sender();
 
         // Calculate total cumulative cost for this sender including this transaction
-        let current_cumulative_cost = sender_cumulative_gas_cost.get(&sender).copied().unwrap_or(U256::ZERO);
+        let current_cumulative_cost =
+            sender_cumulative_gas_cost.get(&sender).copied().unwrap_or(U256::ZERO);
         let new_cumulative_cost = current_cumulative_cost + tx_max_cost + tx.value();
 
         // Check if sender has sufficient balance for cumulative gas costs

@@ -32,7 +32,7 @@ use reth_payload_primitives::{
     BuiltPayload, InvalidPayloadAttributesError, NewPayloadError, PayloadTypes,
 };
 use reth_primitives_traits::{
-    AlloyBlockHeader, BlockTy, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader
+    AlloyBlockHeader, BlockTy, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
 };
 use reth_provider::{
     BlockExecutionOutput, BlockHashReader, BlockNumReader, BlockReader, DBProvider,
@@ -560,7 +560,7 @@ where
                     Ok(StateRootComputeOutcome { state_root, trie_updates }) => {
                         let elapsed = root_time.elapsed();
                         info!(target: "engine::tree", ?state_root, ?elapsed, "State root task finished");
-                        
+
                         maybe_state_root = Some((state_root, trie_updates, elapsed))
                         // we double check the state root here for good measure
                         // if state_root == block.header().state_root() {

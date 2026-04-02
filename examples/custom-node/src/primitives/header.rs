@@ -181,4 +181,26 @@ impl reth_db_api::table::Decompress for CustomHeader {
 
 impl BlockHeader for CustomHeader {}
 
+impl alloy_consensus::BlockHeaderMut for CustomHeader {
+    fn set_state_root(&mut self, state_root: B256) {
+        alloy_consensus::BlockHeaderMut::set_state_root(&mut self.inner, state_root);
+    }
+
+    fn set_gas_used(&mut self, gas_used: u64) {
+        alloy_consensus::BlockHeaderMut::set_gas_used(&mut self.inner, gas_used);
+    }
+
+    fn set_receipts_root(&mut self, receipts_root: B256) {
+        alloy_consensus::BlockHeaderMut::set_receipts_root(&mut self.inner, receipts_root);
+    }
+
+    fn set_logs_bloom(&mut self, logs_bloom: Bloom) {
+        alloy_consensus::BlockHeaderMut::set_logs_bloom(&mut self.inner, logs_bloom);
+    }
+
+    fn set_requests_hash(&mut self, requests_hash: Option<B256>) {
+        alloy_consensus::BlockHeaderMut::set_requests_hash(&mut self.inner, requests_hash);
+    }
+}
+
 impl RlpBincode for CustomHeader {}

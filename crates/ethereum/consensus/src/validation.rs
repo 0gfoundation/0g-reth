@@ -1,10 +1,14 @@
 use alloc::vec::Vec;
 use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, BlockHeaderMut, TxReceipt};
 use alloy_eips::eip7685::Requests;
-use alloy_primitives::{Bloom, B256};
+use alloy_primitives::Bloom;
+#[cfg(test)]
+use alloy_primitives::B256;
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::ConsensusError;
-use reth_primitives_traits::{Block, GotExpected, Receipt, RecoveredBlock, SealedBlock};
+#[cfg(test)]
+use reth_primitives_traits::GotExpected;
+use reth_primitives_traits::{Block, Receipt, RecoveredBlock, SealedBlock};
 
 /// Validate a block with regard to execution results:
 ///
@@ -56,7 +60,8 @@ where
 
     if block.header().gas_used() != cumulative_gas_used {
         // Update header with actual gas used from execution
-        // This is expected because proposal uses gas_limit while validation uses actual execution result
+        // This is expected because proposal uses gas_limit while validation uses actual execution
+        // result
         header.set_gas_used(cumulative_gas_used);
         tracing::info!(
             target: "consensus::validation",
@@ -75,9 +80,11 @@ where
     // See more about EIP here: https://eips.ethereum.org/EIPS/eip-658
     if chain_spec.is_byzantium_active_at_block(block.header().number()) {
         // Calculate receipts root and logs bloom from receipts
-        let receipts_with_bloom = receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
+        let receipts_with_bloom =
+            receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
         let receipts_root = calculate_receipt_root(&receipts_with_bloom);
-        let logs_bloom = receipts_with_bloom.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom_ref());
+        let logs_bloom =
+            receipts_with_bloom.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom_ref());
 
         // Set the calculated values to header
         header.set_receipts_root(receipts_root);
@@ -101,6 +108,7 @@ where
 
 /// Calculate the receipts root, and compare it against the expected receipts root and logs
 /// bloom.
+#[cfg(test)]
 fn verify_receipts<R: Receipt>(
     expected_receipts_root: B256,
     expected_logs_bloom: Bloom,
@@ -125,6 +133,7 @@ fn verify_receipts<R: Receipt>(
 
 /// Compare the calculated receipts root with the expected receipts root, also compare
 /// the calculated logs bloom with the expected logs bloom.
+#[cfg(test)]
 fn compare_receipts_root_and_logs_bloom(
     calculated_receipts_root: B256,
     calculated_logs_bloom: Bloom,

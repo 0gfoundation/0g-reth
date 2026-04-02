@@ -111,13 +111,12 @@ where
 
         // this is the number of blocks that we will cache the values for
         let cached_values = (oracle_config.blocks * 5).max(oracle_config.max_block_history as u32);
-        let default_price = oracle_config.default_suggested_fee.unwrap_or_else(|| GasPriceOracleResult::default().price);
-        
+        let default_price = oracle_config
+            .default_suggested_fee
+            .unwrap_or_else(|| GasPriceOracleResult::default().price);
+
         let inner = Mutex::new(GasPriceOracleInner {
-            last_price: GasPriceOracleResult {
-                block_hash: B256::ZERO,
-                price: default_price,
-            },
+            last_price: GasPriceOracleResult { block_hash: B256::ZERO, price: default_price },
             lowest_effective_tip_cache: EffectiveTipLruCache(LruMap::new(ByLength::new(
                 cached_values,
             ))),
@@ -180,14 +179,14 @@ where
                         .lowest_effective_tip_cache
                         .insert(current_hash, (parent_hash, block_values.clone()));
                     // if block gas usage is less than 60%, set block's gasPrice as defaultGasPrice
-                    if gas_limit > 0 && gas_used * 10 / gas_limit < 6 { 
-                        block_values.iter_mut().for_each(|price| {
-                            *price = inner.default_price.price
-                        });
+                    if gas_limit > 0 && gas_used * 10 / gas_limit < 6 {
+                        for price in &mut block_values {
+                            *price = inner.default_price.price;
+                        }
                     }
                     (parent_hash, block_values)
                 };
-            
+
             if block_values.is_empty() {
                 results.push(inner.default_price.price);
             } else {

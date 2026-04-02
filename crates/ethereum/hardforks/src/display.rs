@@ -173,7 +173,11 @@ impl DisplayHardforks {
             }
         }
 
-        post_merge.push(DisplayFork { name: String::from("StakingActivation"), activated_at: ForkCondition::Timestamp(staking_activation_time), eip: None });
+        post_merge.push(DisplayFork {
+            name: String::from("StakingActivation"),
+            activated_at: ForkCondition::Timestamp(staking_activation_time),
+            eip: None,
+        });
 
         Self { pre_merge, with_merge, post_merge }
     }

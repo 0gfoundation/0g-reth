@@ -284,9 +284,8 @@ impl<N: NetworkPrimitives> TransactionFetcher<N> {
 
         // folds size based on expected response size  and adds selected hashes to the request
         // list and the other hashes to the surplus list
-        loop {
-            let Some((hash, metadata)) = hashes_from_announcement_iter.next() else { break };
-
+        #[allow(clippy::while_let_on_iterator)]
+        while let Some((hash, metadata)) = hashes_from_announcement_iter.next() {
             let Some((_ty, size)) = metadata else {
                 unreachable!("this method is called upon reception of an eth68 announcement")
             };

@@ -1,7 +1,7 @@
 //! Functionality related to tree state.
 
 use crate::engine::EngineApiKind;
-use alloy_eips::{eip1898::BlockWithParent, merge::EPOCH_SLOTS, BlockNumHash, eip7685::Requests};
+use alloy_eips::{eip1898::BlockWithParent, eip7685::Requests, merge::EPOCH_SLOTS, BlockNumHash};
 use alloy_primitives::{
     map::{HashMap, HashSet},
     BlockNumber, B256,
@@ -106,11 +106,10 @@ impl<N: NodePrimitives> TreeState<N> {
     }
 
     /// Returns the execution requests by hash.
-    pub(crate) fn execution_requests_by_hash(
-        &self,
-        hash: &B256,
-    ) -> Option<Requests> {
-        self.blocks_by_hash.get(hash).map(|b| b.execution_outcome().requests.first().unwrap_or(&Requests::default()).clone())
+    pub(crate) fn execution_requests_by_hash(&self, hash: &B256) -> Option<Requests> {
+        self.blocks_by_hash
+            .get(hash)
+            .map(|b| b.execution_outcome().requests.first().cloned().unwrap_or_default())
     }
 
     /// Looks up the post-execution block hash for a given pre-execution payload hash.

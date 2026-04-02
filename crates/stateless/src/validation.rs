@@ -151,7 +151,7 @@ where
 ///
 /// See `stateless_validation` for detailed documentation of the validation process.
 pub fn stateless_validation_with_trie<T, ChainSpec, E>(
-    current_block: RecoveredBlock<Block>,
+    mut current_block: RecoveredBlock<Block>,
     witness: ExecutionWitness,
     chain_spec: Arc<ChainSpec>,
     evm_config: E,
@@ -202,8 +202,13 @@ where
         .map_err(|e| StatelessValidationError::StatelessExecutionFailed(e.to_string()))?;
 
     // Post validation checks
-    validate_block_post_execution(&current_block, &chain_spec, &output.receipts, &output.requests)
-        .map_err(StatelessValidationError::ConsensusValidationFailed)?;
+    validate_block_post_execution(
+        &mut current_block,
+        &chain_spec,
+        &output.receipts,
+        &output.requests,
+    )
+    .map_err(StatelessValidationError::ConsensusValidationFailed)?;
 
     // Compute and check the post state root
     let hashed_state = HashedPostState::from_bundle_state::<KeccakKeyHasher>(&output.state.state);

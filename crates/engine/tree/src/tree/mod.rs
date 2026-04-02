@@ -6,9 +6,11 @@ use crate::{
     tree::{error::InsertPayloadError, metrics::EngineApiMetrics, payload_validator::TreeCtx},
 };
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_eips::{eip1898::BlockWithParent, merge::EPOCH_SLOTS, BlockNumHash, NumHash, eip7685::Requests};
+use alloy_eips::{
+    eip1898::BlockWithParent, eip7685::Requests, merge::EPOCH_SLOTS, BlockNumHash, NumHash,
+};
 use alloy_evm::block::StateChangeSource;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Bytes, B256};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
@@ -29,8 +31,9 @@ use reth_payload_builder::PayloadBuilderHandle;
 use reth_payload_primitives::{
     BuiltPayload, EngineApiMessageVersion, NewPayloadError, PayloadBuilderAttributes, PayloadTypes,
 };
-use reth_primitives_traits::{BlockBody, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader};
-use reth_primitives_traits::transaction::TxHashRef;
+use reth_primitives_traits::{
+    transaction::TxHashRef, BlockBody, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
+};
 use reth_provider::{
     providers::ConsistentDbView, BlockNumReader, BlockReader, DBProvider, DatabaseProviderFactory,
     HashedPostStateProvider, ProviderError, StateProviderBox, StateProviderFactory, StateReader,
@@ -41,7 +44,6 @@ use reth_stages_api::ControlFlow;
 use reth_trie::{HashedPostState, TrieInput};
 use reth_trie_db::DatabaseHashedPostState;
 use revm::state::EvmState;
-use revm_primitives::hex;
 use state::TreeState;
 use std::{
     fmt::Debug,
@@ -547,7 +549,8 @@ where
         let block_hash = num_hash.hash;
         // if this block hash was previously marked invalid, return INVALID immediately.
         // This prevents infinite loops when the CL retries a payload
-        // that Reth already validated and rejected, but the CL timed out before receiving invalid resp.
+        // that Reth already validated and rejected, but the CL timed out before receiving invalid
+        // resp.
         if let Some(invalid) = self.state.invalid_headers.get(&block_hash) {
             warn!(
                 target: "engine::tree",
@@ -591,13 +594,13 @@ where
             match self.insert_payload(payload) {
                 Ok(status) => {
                     let status = match status {
-                        InsertPayloadOk::Inserted(BlockStatus::Valid{ head, requests }) => {
+                        InsertPayloadOk::Inserted(BlockStatus::Valid { head, requests }) => {
                             execution_requests = requests;
                             latest_valid_hash = Some(head.hash);
                             self.try_connect_buffered_blocks(num_hash)?;
                             PayloadStatusEnum::Valid
                         }
-                        InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head, requests }) => {
+                        InsertPayloadOk::AlreadySeen(BlockStatus::Valid { head, requests }) => {
                             execution_requests = requests;
                             latest_valid_hash = Some(head.hash);
                             PayloadStatusEnum::Valid
@@ -1766,10 +1769,7 @@ where
     }
 
     /// Return requests from in-memory state or database by hash.
-    fn requests_by_hash(
-        &self,
-        hash: B256,
-    ) -> ProviderResult<Option<Requests>> {
+    fn requests_by_hash(&self, hash: B256) -> ProviderResult<Option<Requests>> {
         // check memory only
         let requests = self.state.tree_state.execution_requests_by_hash(&hash);
 
@@ -1946,7 +1946,7 @@ where
                 Ok(res) => {
                     debug!(target: "engine::tree", child =?child_num_hash, ?res, "connected buffered block");
                     if self.is_sync_target_head(child_num_hash.hash) &&
-                        matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid{ .. }))
+                        matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid { .. }))
                     {
                         self.make_canonical(child_num_hash.hash)?;
                     }
@@ -2270,7 +2270,7 @@ where
 
         // try to append the block
         match self.insert_block(block) {
-            Ok(InsertPayloadOk::Inserted(BlockStatus::Valid{ .. })) => {
+            Ok(InsertPayloadOk::Inserted(BlockStatus::Valid { .. })) => {
                 if self.is_sync_target_head(block_num_hash.hash) {
                     trace!(target: "engine::tree", "appended downloaded sync target block");
 
@@ -2355,15 +2355,19 @@ where
                 let block = convert_to_block(self, input)?;
                 return Err(InsertBlockError::new(block.into_sealed_block(), err.into()).into());
             }
-            Ok(Some( header )) => {
+            Ok(Some(header)) => {
                 // We now assume that we already have this block in the tree. However, we need to
                 // run the conversion to ensure that the block hash is valid.
                 convert_to_block(self, input)?;
 
                 // revert if return provider error
-                let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
-                              
-                return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: header.num_hash(), requests }))
+                let requests =
+                    self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
+
+                return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
+                    head: header.num_hash(),
+                    requests,
+                }))
             }
             _ => {}
         };
@@ -2384,12 +2388,14 @@ where
         // the same post-execution hash (same transactions → same gas_used → same hash),
         // so this is deterministic and consistent, matching geth's behavior where
         // latestValidHash = newHeader.Hash() (the post-execution hash).
-        if let Some(&executed_hash) = self.state.tree_state
-            .executed_hash_by_payload_hash(&block_num_hash.hash)
+        if let Some(&executed_hash) =
+            self.state.tree_state.executed_hash_by_payload_hash(&block_num_hash.hash)
         {
             convert_to_block(self, input)?;
 
-            let requests = self.state.tree_state
+            let requests = self
+                .state
+                .tree_state
                 .execution_requests_by_hash(&executed_hash)
                 .unwrap_or_default()
                 .take();
@@ -2454,16 +2460,16 @@ where
         self.state.tree_state.insert_executed(executed.clone());
         self.metrics.engine.executed_blocks.set(self.state.tree_state.block_count() as f64);
 
-        let requests = executed.execution_output.requests.first().unwrap_or(&Requests::default()).clone().take();
+        let requests =
+            executed.execution_output.requests.first().cloned().unwrap_or_default().take();
         let head = executed.block.recovered_block.num_hash();
 
         // Record mapping from pre-execution payload hash to post-execution block hash.
         // This enables CL retry dedup when gas_used modification changes the hash.
         if block_num_hash.hash != head.hash {
-            self.state.tree_state.payload_to_executed_hash
-                .insert(block_num_hash.hash, head.hash);
+            self.state.tree_state.payload_to_executed_hash.insert(block_num_hash.hash, head.hash);
         }
-        
+
         // emit insert event
         let elapsed = start.elapsed();
         let engine_event = if is_fork {
@@ -2478,7 +2484,7 @@ where
             .block_insert_total_duration
             .record(block_insert_start.elapsed().as_secs_f64());
         debug!(target: "engine::tree", block=?block_num_hash, "Finished inserting block");
-        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid{ head, requests}))
+        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid { head, requests }))
     }
 
     /// Computes the trie input at the provided parent hash.
@@ -2611,7 +2617,10 @@ where
         );
 
         // Log specifically if this is a BlockGasUsed error during block insertion
-        if matches!(validation_err, error::InsertBlockValidationError::Consensus(ConsensusError::BlockGasUsed { .. })) {
+        if matches!(
+            validation_err,
+            error::InsertBlockValidationError::Consensus(ConsensusError::BlockGasUsed { .. })
+        ) {
             error!(
                 target: "engine::tree",
                 block_number = block.number(),
@@ -2853,7 +2862,11 @@ where
                 //
                 // if the payload is deemed VALID and the build process has begun.
                 OnForkChoiceUpdated::updated_with_pending_payload_id(
-                    PayloadStatus::new(PayloadStatusEnum::Valid, Some(state.head_block_hash), vec![]),
+                    PayloadStatus::new(
+                        PayloadStatusEnum::Valid,
+                        Some(state.head_block_hash),
+                        vec![],
+                    ),
                     pending_payload_id,
                 )
             }

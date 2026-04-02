@@ -26,7 +26,6 @@ use revm::{
     database::{states::bundle_state::BundleRetention, BundleState, State},
 };
 
-
 /// A type that knows how to execute a block. It is assumed to operate on a
 /// [`crate::Evm`] internally and use [`State`] as database.
 pub trait Executor<DB: Database>: Sized {
@@ -346,10 +345,7 @@ pub trait BlockBuilder {
 
     /// Adds a transaction to the block without executing it.
     /// This only stores the transaction in internal state, no EVM execution occurs.
-    fn add_transaction_without_execution(
-        &mut self,
-        tx: impl ExecutorTx<Self::Executor>,
-    );
+    fn add_transaction_without_execution(&mut self, tx: impl ExecutorTx<Self::Executor>);
 
     /// Completes the block building process and returns the [`BlockBuilderOutcome`].
     fn finish(
@@ -484,10 +480,7 @@ where
         }
     }
 
-    fn add_transaction_without_execution(
-        &mut self,
-        tx: impl ExecutorTx<Self::Executor>,
-    ) {
+    fn add_transaction_without_execution(&mut self, tx: impl ExecutorTx<Self::Executor>) {
         self.transactions.push(tx.into_recovered());
     }
 
