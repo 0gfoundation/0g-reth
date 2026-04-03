@@ -510,7 +510,7 @@ where
         Box::pin(async move {
             let mut accepted_check: bool = false;
 
-            let mut latest_block = env
+            let latest_block = env
                 .current_block_info()
                 .ok_or_else(|| eyre::eyre!("No latest block information available"))?;
 
