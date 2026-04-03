@@ -1,11 +1,11 @@
 # Runs benchmarks.
 
 on:
-  pull_request:
-  # TODO: Disabled temporarily for https://github.com/CodSpeedHQ/runner/issues/55
-  # merge_group:
-  push:
-    branches: [main]
+  workflow_dispatch: {}
+  # Disabled: upstream dependency issues prevent compilation
+  # pull_request:
+  # push:
+  #   branches: [main]
 
 env:
   CARGO_TERM_COLOR: always

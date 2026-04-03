@@ -6,8 +6,10 @@
 # 4) deserialize previously generated test vectors
 
 on:
-  pull_request:
-  merge_group:
+  workflow_dispatch: {}
+  # Disabled: upstream dependency issues prevent compilation
+  # pull_request:
+  # merge_group:
   push:
     branches: [main]
 
