@@ -22,6 +22,11 @@ jobs:
         env:
           SLACK_REVIEW_WEBHOOK_URL: ${{ secrets.SLACK_REVIEW_WEBHOOK_URL }}
           SLACK_REVIEWERS: ${{ secrets.SLACK_REVIEWERS }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          AUTHOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
         run: |
           if [ -z "$SLACK_REVIEW_WEBHOOK_URL" ]; then
             echo "⚠️ SLACK_REVIEW_WEBHOOK_URL not set, skipping"
@@ -37,11 +42,6 @@ jobs:
               MENTIONS="${MENTIONS}<@${uid}> "
             done
           fi
-          PR_URL="${{ github.event.pull_request.html_url }}"
-          PR_NUM="${{ github.event.pull_request.number }}"
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          AUTHOR="${{ github.actor }}"
-          REPO="${{ github.repository }}"
           curl -s -X POST "$SLACK_REVIEW_WEBHOOK_URL" \
             -H 'Content-Type: application/json' \
             -d '{"text":"'"${MENTIONS}"'\n📝 *New PR needs review*\nRepo: `'"${REPO}"'`\nPR: <'"${PR_URL}"'|#'"${PR_NUM}"' '"${PR_TITLE}"'>\nAuthor: '"${AUTHOR}"'"}'

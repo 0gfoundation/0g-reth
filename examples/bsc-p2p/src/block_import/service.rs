@@ -432,6 +432,7 @@ mod tests {
                         tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::new(
                             responses.fcu.clone(),
                             None,
+                            vec![],
                         ))))
                         .unwrap();
                     }

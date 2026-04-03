@@ -2,7 +2,7 @@
 extend-exclude = [
     ".git",
     "target",
-    "crates/storage/libmdbx-rs/mdbx-sys/libmdbx",
+    "crates/storage/libmdbx-rs",
     "Cargo.toml",
     "Cargo.lock",
     "testing/ef-tests",

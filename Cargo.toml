@@ -739,7 +739,7 @@ alloy-network-primitives = { git = "https://github.com/0gfoundation/0g-alloy", r
 alloy-provider = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-provider", features = ["reqwest"] }
 alloy-pubsub = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-pubsub" }
 alloy-rpc-client = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-rpc-client" }
-alloy-rpc-types ={ git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-rpc-types", features = ["eth"] }
+alloy-rpc-types = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-rpc-types", features = ["eth"] }
 alloy-rpc-types-admin = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-rpc-types-admin" }
 alloy-rpc-types-anvil = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-rpc-types-anvil" }
 alloy-rpc-types-beacon = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-rpc-types-beacon" }

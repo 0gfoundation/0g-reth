@@ -89,4 +89,8 @@ allow-git = [
     "https://github.com/alloy-rs/evm",
     "https://github.com/alloy-rs/hardforks",
     "https://github.com/paradigmxyz/jsonrpsee",
+    # 0g fork dependencies
+    "https://github.com/0gfoundation/0g-alloy",
+    "https://github.com/0gfoundation/alloy-evm",
+    "https://github.com/0gfoundation/revm",
 ]
