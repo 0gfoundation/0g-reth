@@ -1,5 +1,9 @@
 use crate::{cli::config::PayloadBuilderConfig, version::default_extra_data};
 use alloy_consensus::constants::MAXIMUM_EXTRA_DATA_SIZE;
+// reth-v2.8.1 migration: 955cdc20e imported `eip1559::ETHEREUM_BLOCK_GAS_LIMIT_36M` next to
+// `merge::SLOT_DURATION`; upstream no longer uses `SLOT_DURATION` here (its defaults come from
+// `DefaultPayloadBuilderValues`), so only the gas limit constant is imported.
+use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_36M;
 use alloy_primitives::Bytes;
 use clap::{
     builder::{RangedU64ValueParser, TypedValueParser},
@@ -92,8 +96,15 @@ pub struct PayloadBuilderArgs {
     pub extra_data: Bytes,
 
     /// Target gas limit for built blocks.
-    #[arg(long = "builder.gaslimit", alias = "miner.gaslimit", value_name = "GAS_LIMIT")]
-    pub gas_limit: Option<u64>,
+    // reth-v2.8.1 migration: 955cdc20e made this a `u64` with a 36M default; upstream since added
+    // the `miner.gaslimit` alias, which is kept.
+    #[arg(
+        long = "builder.gaslimit",
+        alias = "miner.gaslimit",
+        value_name = "GAS_LIMIT",
+        default_value_t = ETHEREUM_BLOCK_GAS_LIMIT_36M
+    )]
+    pub gas_limit: u64,
 
     /// The interval at which the job should build a new payload after the last.
     ///
@@ -136,7 +147,9 @@ impl Default for PayloadBuilderArgs {
         Self {
             extra_data: Bytes::from(defaults.extra_data.as_bytes().to_vec()),
             interval: parse_duration_from_secs_or_ms(defaults.interval.as_str()).unwrap(),
-            gas_limit: None,
+            // reth-v2.8.1 migration: 955cdc20e changed `None` to the 36M default; the other
+            // fields are upstream's (now read from `DefaultPayloadBuilderValues`).
+            gas_limit: ETHEREUM_BLOCK_GAS_LIMIT_36M,
             deadline: Duration::from_secs(defaults.deadline.parse().unwrap()),
             max_payload_tasks: defaults.max_payload_tasks,
             max_blobs_per_block: None,
@@ -158,7 +171,7 @@ impl PayloadBuilderConfig for PayloadBuilderArgs {
     }
 
     fn gas_limit(&self) -> Option<u64> {
-        self.gas_limit
+        Some(self.gas_limit)
     }
 
     fn max_payload_tasks(&self) -> usize {
