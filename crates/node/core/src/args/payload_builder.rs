@@ -1,6 +1,6 @@
 use crate::{cli::config::PayloadBuilderConfig, version::default_extra_data};
 use alloy_consensus::constants::MAXIMUM_EXTRA_DATA_SIZE;
-use alloy_eips::merge::SLOT_DURATION;
+use alloy_eips::{eip1559::ETHEREUM_BLOCK_GAS_LIMIT_36M, merge::SLOT_DURATION};
 use clap::{
     builder::{RangedU64ValueParser, TypedValueParser},
     Arg, Args, Command,
@@ -17,8 +17,12 @@ pub struct PayloadBuilderArgs {
     pub extra_data: String,
 
     /// Target gas limit for built blocks.
-    #[arg(long = "builder.gaslimit", value_name = "GAS_LIMIT")]
-    pub gas_limit: Option<u64>,
+    #[arg(
+        long = "builder.gaslimit",
+        value_name = "GAS_LIMIT",
+        default_value_t = ETHEREUM_BLOCK_GAS_LIMIT_36M
+    )]
+    pub gas_limit: u64,
 
     /// The interval at which the job should build a new payload after the last.
     ///
@@ -42,7 +46,7 @@ impl Default for PayloadBuilderArgs {
         Self {
             extra_data: default_extra_data(),
             interval: Duration::from_secs(1),
-            gas_limit: None,
+            gas_limit: ETHEREUM_BLOCK_GAS_LIMIT_36M,
             deadline: SLOT_DURATION,
             max_payload_tasks: 3,
         }
@@ -63,7 +67,7 @@ impl PayloadBuilderConfig for PayloadBuilderArgs {
     }
 
     fn gas_limit(&self) -> Option<u64> {
-        self.gas_limit
+        Some(self.gas_limit)
     }
 
     fn max_payload_tasks(&self) -> usize {
