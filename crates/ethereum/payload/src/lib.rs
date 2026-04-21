@@ -10,7 +10,7 @@
 #![allow(clippy::useless_let_if_seq)]
 
 use alloy_consensus::Transaction;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_rlp::Encodable;
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
@@ -35,8 +35,11 @@ use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
     ValidPoolTransaction,
 };
-use revm::context_interface::Block as _;
-use std::{collections::HashMap, sync::Arc};
+use revm::{context_interface::Block as _, precompile::perp_dex::PERP_DEX_ADDRESS};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tracing::{debug, trace, warn};
 
 mod config;
@@ -178,10 +181,8 @@ where
     let block_gas_limit: u64 = builder.evm_mut().block().gas_limit;
     let base_fee = builder.evm_mut().block().basefee;
 
-    let mut best_txs = best_txs(BestTransactionsAttributes::new(
-        base_fee,
-        builder.evm_mut().block().blob_gasprice().map(|gasprice| gasprice as u64),
-    ));
+    let blob_gasprice =
+        builder.evm_mut().block().blob_gasprice().map(|gasprice| gasprice as u64);
     let mut total_fees = U256::ZERO;
 
     // Track cumulative gas cost per sender to prevent insufficient balance issues
@@ -197,8 +198,8 @@ where
     // blob sidecars if any.
     let mut blob_sidecars = BlobSidecars::Empty;
 
-    let mut block_blob_count = 0;
-    let mut block_transactions_rlp_length = 0;
+    let mut block_blob_count = 0u64;
+    let mut block_transactions_rlp_length = 0usize;
 
     let blob_params = chain_spec.blob_params_at_timestamp(attributes.timestamp);
     let max_blob_count =
@@ -206,168 +207,229 @@ where
 
     let is_osaka = chain_spec.is_osaka_active_at_timestamp(attributes.timestamp);
 
-    while let Some(pool_tx) = best_txs.next() {
-        // ensure we still have capacity for this transaction
-        if cumulative_gas_used + pool_tx.gas_limit() > block_gas_limit {
-            // we can't fit this transaction into the block, so we need to mark it as invalid
-            // which also removes all dependent transaction from the iterator before we can
-            // continue
-            best_txs.mark_invalid(
-                &pool_tx,
-                InvalidPoolTransactionError::ExceedsGasLimit(pool_tx.gas_limit(), block_gas_limit),
-            );
-            continue
-        }
+    // PerpDEX-priority gating: on blocks where `target_block % perpdex_modulus != 0`, pack
+    // PerpDEX-targeted transactions first and use a second pass to fill remaining gas with
+    // non-PerpDEX traffic. `perpdex_modulus == 0` (or target % modulus == 0) disables the gating.
+    let target_block = parent_header.number + 1;
+    let perpdex_modulus = builder_config.perpdex_modulus;
+    let is_open_block = perpdex_modulus == 0 || target_block % perpdex_modulus == 0;
+    let withdrawals_rlp_length = attributes.withdrawals().length();
+    let mut included_hashes: HashSet<B256> = HashSet::new();
 
-        // check if the job was cancelled, if so we can exit early
-        if cancel.is_cancelled() {
-            return Ok(BuildOutcome::Cancelled)
-        }
+    // Outcome of attempting to include one transaction. Caller applies `mark_invalid`
+    // / `skip_blobs` to the iterator based on the result; the closure itself does not
+    // see the iterator so the pass-1 / pass-2 loops can supply different iterators.
+    enum PackOutcome {
+        Included { saturated_blobs: bool },
+        Invalid(InvalidPoolTransactionError),
+        Cancelled,
+    }
 
-        // convert tx to a signed transaction
-        let tx = pool_tx.to_consensus();
+    // All mutable per-block state is captured by `&mut` here. Both passes call this closure;
+    // we wrap both loops in a block so the closure drops before `builder.finish(...)` runs.
+    {
+        let mut try_pack = |pool_tx: Arc<ValidPoolTransaction<Pool::Transaction>>|
+            -> Result<PackOutcome, PayloadBuilderError> {
+            // ensure we still have capacity for this transaction
+            if cumulative_gas_used + pool_tx.gas_limit() > block_gas_limit {
+                return Ok(PackOutcome::Invalid(InvalidPoolTransactionError::ExceedsGasLimit(
+                    pool_tx.gas_limit(),
+                    block_gas_limit,
+                )));
+            }
 
-        let estimated_block_size_with_tx = block_transactions_rlp_length +
-            tx.inner().length() +
-            attributes.withdrawals().length() +
-            1024; // 1Kb of overhead for the block header
+            // check if the job was cancelled, if so we can exit early
+            if cancel.is_cancelled() {
+                return Ok(PackOutcome::Cancelled);
+            }
 
-        if is_osaka && estimated_block_size_with_tx > MAX_RLP_BLOCK_SIZE {
-            best_txs.mark_invalid(
-                &pool_tx,
-                InvalidPoolTransactionError::OversizedData(
+            // convert tx to a signed transaction
+            let tx = pool_tx.to_consensus();
+
+            let estimated_block_size_with_tx = block_transactions_rlp_length +
+                tx.inner().length() +
+                withdrawals_rlp_length +
+                1024; // 1Kb of overhead for the block header
+
+            if is_osaka && estimated_block_size_with_tx > MAX_RLP_BLOCK_SIZE {
+                return Ok(PackOutcome::Invalid(InvalidPoolTransactionError::OversizedData(
                     estimated_block_size_with_tx,
                     MAX_RLP_BLOCK_SIZE,
-                ),
-            );
-            continue;
-        }
+                )));
+            }
 
-        // There's only limited amount of blob space available per block, so we need to check if
-        // the EIP-4844 can still fit in the block
-        let mut blob_tx_sidecar = None;
-        if let Some(blob_tx) = tx.as_eip4844() {
-            let tx_blob_count = blob_tx.tx().blob_versioned_hashes.len() as u64;
+            // There's only limited amount of blob space available per block, so we need to check
+            // if the EIP-4844 can still fit in the block
+            let mut blob_tx_sidecar = None;
+            if let Some(blob_tx) = tx.as_eip4844() {
+                let tx_blob_count = blob_tx.tx().blob_versioned_hashes.len() as u64;
 
-            if block_blob_count + tx_blob_count > max_blob_count {
-                // we can't fit this _blob_ transaction into the block, so we mark it as
-                // invalid, which removes its dependent transactions from
-                // the iterator. This is similar to the gas limit condition
-                // for regular transactions above.
-                trace!(target: "payload_builder", tx=?tx.hash(), ?block_blob_count, "skipping blob transaction because it would exceed the max blob count per block");
-                best_txs.mark_invalid(
-                    &pool_tx,
-                    InvalidPoolTransactionError::Eip4844(
+                if block_blob_count + tx_blob_count > max_blob_count {
+                    trace!(target: "payload_builder", tx=?tx.hash(), ?block_blob_count, "skipping blob transaction because it would exceed the max blob count per block");
+                    return Ok(PackOutcome::Invalid(InvalidPoolTransactionError::Eip4844(
                         Eip4844PoolTransactionError::TooManyEip4844Blobs {
                             have: block_blob_count + tx_blob_count,
                             permitted: max_blob_count,
                         },
-                    ),
-                );
-                continue
-            }
+                    )));
+                }
 
-            let blob_sidecar_result = 'sidecar: {
-                let Some(sidecar) =
-                    pool.get_blob(*tx.hash()).map_err(PayloadBuilderError::other)?
-                else {
-                    break 'sidecar Err(Eip4844PoolTransactionError::MissingEip4844BlobSidecar)
-                };
+                let blob_sidecar_result = 'sidecar: {
+                    let Some(sidecar) =
+                        pool.get_blob(*tx.hash()).map_err(PayloadBuilderError::other)?
+                    else {
+                        break 'sidecar Err(Eip4844PoolTransactionError::MissingEip4844BlobSidecar)
+                    };
 
-                if is_osaka {
-                    if sidecar.is_eip7594() {
+                    if is_osaka {
+                        if sidecar.is_eip7594() {
+                            Ok(sidecar)
+                        } else {
+                            Err(Eip4844PoolTransactionError::UnexpectedEip4844SidecarAfterOsaka)
+                        }
+                    } else if sidecar.is_eip4844() {
                         Ok(sidecar)
                     } else {
-                        Err(Eip4844PoolTransactionError::UnexpectedEip4844SidecarAfterOsaka)
+                        Err(Eip4844PoolTransactionError::UnexpectedEip7594SidecarBeforeOsaka)
                     }
-                } else if sidecar.is_eip4844() {
-                    Ok(sidecar)
-                } else {
-                    Err(Eip4844PoolTransactionError::UnexpectedEip7594SidecarBeforeOsaka)
-                }
-            };
+                };
 
-            blob_tx_sidecar = match blob_sidecar_result {
-                Ok(sidecar) => Some(sidecar),
-                Err(error) => {
-                    best_txs.mark_invalid(&pool_tx, InvalidPoolTransactionError::Eip4844(error));
-                    continue
-                }
-            };
-        }
+                blob_tx_sidecar = match blob_sidecar_result {
+                    Ok(sidecar) => Some(sidecar),
+                    Err(error) => {
+                        return Ok(PackOutcome::Invalid(InvalidPoolTransactionError::Eip4844(
+                            error,
+                        )));
+                    }
+                };
+            }
 
-        // Use gas limit instead of executing transaction
-        let gas_used = pool_tx.gas_limit();
+            // Use gas limit instead of executing transaction
+            let gas_used = pool_tx.gas_limit();
 
-        // Calculate the maximum gas cost for this transaction
-        let max_fee_per_gas = tx.max_fee_per_gas();
-        let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(0);
-        let effective_gas_price = (U256::from(base_fee) + U256::from(max_priority_fee_per_gas))
-            .min(U256::from(max_fee_per_gas));
-        let tx_max_cost = U256::from(gas_used) * effective_gas_price;
+            // Calculate the maximum gas cost for this transaction
+            let max_fee_per_gas = tx.max_fee_per_gas();
+            let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(0);
+            let effective_gas_price = (U256::from(base_fee) + U256::from(max_priority_fee_per_gas))
+                .min(U256::from(max_fee_per_gas));
+            let tx_max_cost = U256::from(gas_used) * effective_gas_price;
 
-        // Get sender address
-        let sender = pool_tx.sender();
+            // Get sender address
+            let sender = pool_tx.sender();
 
-        // Calculate total cumulative cost for this sender including this transaction
-        let current_cumulative_cost = sender_cumulative_gas_cost.get(&sender).copied().unwrap_or(U256::ZERO);
-        let new_cumulative_cost = current_cumulative_cost + tx_max_cost + tx.value();
+            // Calculate total cumulative cost for this sender including this transaction
+            let current_cumulative_cost =
+                sender_cumulative_gas_cost.get(&sender).copied().unwrap_or(U256::ZERO);
+            let new_cumulative_cost = current_cumulative_cost + tx_max_cost + tx.value();
 
-        // Check if sender has sufficient balance for cumulative gas costs
-        // Query sender balance from the state provider
-        if let Ok(Some(sender_account)) = state_provider.basic_account(&sender) {
-            let sender_balance = sender_account.balance;
+            // Check if sender has sufficient balance for cumulative gas costs
+            // Query sender balance from the state provider
+            if let Ok(Some(sender_account)) = state_provider.basic_account(&sender) {
+                let sender_balance = sender_account.balance;
 
-            if sender_balance < new_cumulative_cost {
-                trace!(
-                    target: "payload_builder",
-                    ?tx,
-                    ?sender,
-                    sender_balance = ?sender_balance,
-                    required_cost = ?new_cumulative_cost,
-                    cumulative_cost = ?current_cumulative_cost,
-                    "skipping transaction: insufficient balance for cumulative gas costs"
-                );
-                best_txs.mark_invalid(
-                    &pool_tx,
-                    InvalidPoolTransactionError::ExceedsFeeCap {
+                if sender_balance < new_cumulative_cost {
+                    trace!(
+                        target: "payload_builder",
+                        ?tx,
+                        ?sender,
+                        sender_balance = ?sender_balance,
+                        required_cost = ?new_cumulative_cost,
+                        cumulative_cost = ?current_cumulative_cost,
+                        "skipping transaction: insufficient balance for cumulative gas costs"
+                    );
+                    return Ok(PackOutcome::Invalid(InvalidPoolTransactionError::ExceedsFeeCap {
                         max_tx_fee_wei: new_cumulative_cost.try_into().unwrap_or(u128::MAX),
                         tx_fee_cap_wei: sender_balance.try_into().unwrap_or(u128::MAX),
-                    },
-                );
+                    }));
+                }
+            }
+
+            // Add transaction to block without execution
+            builder.add_transaction_without_execution(tx.clone());
+
+            // Update sender's cumulative gas cost
+            sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
+
+            // add to the total blob gas used if the transaction successfully executed
+            let mut saturated_blobs = false;
+            if let Some(blob_tx) = tx.as_eip4844() {
+                block_blob_count += blob_tx.tx().blob_versioned_hashes.len() as u64;
+
+                // if we've reached the max blob count, we can skip blob txs entirely
+                if block_blob_count == max_blob_count {
+                    saturated_blobs = true;
+                }
+            }
+
+            block_transactions_rlp_length += tx.inner().length();
+
+            // update and add to total fees
+            let miner_fee = tx
+                .effective_tip_per_gas(base_fee)
+                .expect("fee is always valid; execution succeeded");
+            total_fees += U256::from(miner_fee) * U256::from(gas_used);
+            cumulative_gas_used += gas_used;
+
+            // Add blob tx sidecar to the payload.
+            if let Some(sidecar) = blob_tx_sidecar {
+                blob_sidecars.push_sidecar_variant(sidecar.as_ref().clone());
+            }
+
+            Ok(PackOutcome::Included { saturated_blobs })
+        };
+
+        // Pass 1: on closed blocks, pack only PerpDEX txs (deferring everything else via
+        // `mark_invalid`, which cascades their same-sender descendants out of this iterator
+        // only — the pool itself is unaffected). On open blocks, pack everything normally.
+        let mut best_txs_pass1 =
+            best_txs(BestTransactionsAttributes::new(base_fee, blob_gasprice));
+        while let Some(pool_tx) = best_txs_pass1.next() {
+            if !is_open_block && pool_tx.to() != Some(PERP_DEX_ADDRESS) {
+                best_txs_pass1
+                    .mark_invalid(&pool_tx, InvalidPoolTransactionError::Underpriced);
                 continue;
             }
-        }
-
-        // Add transaction to block without execution
-        builder.add_transaction_without_execution(tx.clone());
-
-        // gas_used is set to the transaction's gas limit (line 301)
-
-        // Update sender's cumulative gas cost
-        sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
-
-        // add to the total blob gas used if the transaction successfully executed
-        if let Some(blob_tx) = tx.as_eip4844() {
-            block_blob_count += blob_tx.tx().blob_versioned_hashes.len() as u64;
-
-            // if we've reached the max blob count, we can skip blob txs entirely
-            if block_blob_count == max_blob_count {
-                best_txs.skip_blobs();
+            match try_pack(pool_tx.clone())? {
+                PackOutcome::Included { saturated_blobs } => {
+                    if !is_open_block {
+                        included_hashes.insert(*pool_tx.hash());
+                    }
+                    if saturated_blobs {
+                        best_txs_pass1.skip_blobs();
+                    }
+                }
+                PackOutcome::Invalid(err) => {
+                    best_txs_pass1.mark_invalid(&pool_tx, err);
+                }
+                PackOutcome::Cancelled => return Ok(BuildOutcome::Cancelled),
             }
         }
 
-        block_transactions_rlp_length += tx.inner().length();
-
-        // update and add to total fees
-        let miner_fee =
-            tx.effective_tip_per_gas(base_fee).expect("fee is always valid; execution succeeded");
-        total_fees += U256::from(miner_fee) * U256::from(gas_used);
-        cumulative_gas_used += gas_used;
-
-        // Add blob tx sidecar to the payload.
-        if let Some(sidecar) = blob_tx_sidecar {
-            blob_sidecars.push_sidecar_variant(sidecar.as_ref().clone());
+        // Pass 2 (closed blocks only): fill remaining gas with non-PerpDEX txs as filler.
+        // A fresh pool iterator is required because pass 1 cascaded them out of `best_txs_pass1`.
+        // Already-packed hashes are skipped silently — `next()` has already advanced the
+        // sender's internal nonce cursor, so skipping with `continue` leaves pass 2 in the
+        // correct state to yield the sender's next-nonce tx.
+        if !is_open_block {
+            let mut best_txs_pass2 = pool.best_transactions_with_attributes(
+                BestTransactionsAttributes::new(base_fee, blob_gasprice),
+            );
+            while let Some(pool_tx) = best_txs_pass2.next() {
+                if included_hashes.contains(pool_tx.hash()) {
+                    continue;
+                }
+                match try_pack(pool_tx.clone())? {
+                    PackOutcome::Included { saturated_blobs } => {
+                        if saturated_blobs {
+                            best_txs_pass2.skip_blobs();
+                        }
+                    }
+                    PackOutcome::Invalid(err) => {
+                        best_txs_pass2.mark_invalid(&pool_tx, err);
+                    }
+                    PackOutcome::Cancelled => return Ok(BuildOutcome::Cancelled),
+                }
+            }
         }
     }
 

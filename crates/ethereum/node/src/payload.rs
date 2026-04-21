@@ -47,12 +47,15 @@ where
         let conf = ctx.payload_builder_config();
         let chain = ctx.chain_spec().chain();
         let gas_limit = conf.gas_limit_for(chain);
+        let perpdex_modulus = conf.perpdex_modulus();
 
         Ok(reth_ethereum_payload_builder::EthereumPayloadBuilder::new(
             ctx.provider().clone(),
             pool,
             evm_config,
-            EthereumBuilderConfig::new().with_gas_limit(gas_limit),
+            EthereumBuilderConfig::new()
+                .with_gas_limit(gas_limit)
+                .with_perpdex_modulus(perpdex_modulus),
         ))
     }
 }

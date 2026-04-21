@@ -714,17 +714,17 @@ walkdir = "2.3.3"
 vergen-git2 = "1.0.5"
 
 [patch.crates-io]
-revm = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "revm-database-interface" }
-op-revm = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de8aec344fd5acd952bb23b0ed7", package = "op-revm" }
+revm = { git = "https://github.com/0gfoundation/revm", branch = "perpdex" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "revm-database-interface" }
+op-revm = { git = "https://github.com/0gfoundation/revm", branch = "perpdex", package = "op-revm" }
 
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "8b7799f7449766fafcbd31a128d1ca61987ffe90" }
 
@@ -756,18 +756,6 @@ alloy-transport = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d
 alloy-transport-http = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-transport-http", features = ["reqwest-rustls-tls"] }
 alloy-transport-ipc = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-transport-ipc" }
 alloy-transport-ws = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-transport-ws" }
-
-# revm = { path = "../revm/crates/revm" }
-# revm-bytecode = { path = "../revm/crates/bytecode" }
-# revm-database = { path = "../revm/crates/database" }
-# revm-state = { path = "../revm/crates/state" }
-# revm-primitives = { path = "../revm/crates/primitives" }
-# revm-interpreter = { path = "../revm/crates/interpreter" }
-# revm-inspector = { path = "../revm/crates/inspector" }
-# revm-context = { path = "../revm/crates/context" }
-# revm-context-interface = { path = "../revm/crates/context/interface" }
-# revm-database-interface = { path = "../revm/crates/database/interface" }
-# op-revm = { path = "../revm/crates/op-revm" }
 
 # alloy-evm = { path = "../alloy-evm/crates/evm" }
 

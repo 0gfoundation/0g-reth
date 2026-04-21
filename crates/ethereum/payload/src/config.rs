@@ -9,6 +9,10 @@ pub struct EthereumBuilderConfig {
     /// Waits for the first payload to be built if there is no payload built when the payload is
     /// being resolved.
     pub await_payload_on_missing: bool,
+    /// If non-zero, on blocks where `target_block % perpdex_modulus != 0` the payload builder
+    /// packs PerpDEX-targeted transactions first and only uses remaining gas to fill the block
+    /// with non-PerpDEX transactions. `0` disables the behavior entirely.
+    pub perpdex_modulus: u64,
 }
 
 impl Default for EthereumBuilderConfig {
@@ -20,7 +24,11 @@ impl Default for EthereumBuilderConfig {
 impl EthereumBuilderConfig {
     /// Create new payload builder config.
     pub const fn new() -> Self {
-        Self { desired_gas_limit: ETHEREUM_BLOCK_GAS_LIMIT_30M, await_payload_on_missing: true }
+        Self {
+            desired_gas_limit: ETHEREUM_BLOCK_GAS_LIMIT_30M,
+            await_payload_on_missing: true,
+            perpdex_modulus: 0,
+        }
     }
 
     /// Set desired gas limit.
@@ -33,6 +41,13 @@ impl EthereumBuilderConfig {
     /// resolved and no payload has been built yet.
     pub const fn with_await_payload_on_missing(mut self, await_payload_on_missing: bool) -> Self {
         self.await_payload_on_missing = await_payload_on_missing;
+        self
+    }
+
+    /// Enables PerpDEX-priority packing with the given modulus. `0` disables the behavior
+    /// (see [`EthereumBuilderConfig::perpdex_modulus`]).
+    pub const fn with_perpdex_modulus(mut self, perpdex_modulus: u64) -> Self {
+        self.perpdex_modulus = perpdex_modulus;
         self
     }
 }

@@ -39,6 +39,12 @@ pub struct PayloadBuilderArgs {
     /// Maximum number of tasks to spawn for building a payload.
     #[arg(long = "builder.max-tasks", default_value = "3", value_parser = RangedU64ValueParser::<usize>::new().range(1..))]
     pub max_payload_tasks: usize,
+
+    /// Prioritize PerpDEX-targeted transactions on every block where `height % N != 0`.
+    /// Non-PerpDEX transactions are deferred and only fill the remaining gas. `0` disables
+    /// this behavior (default).
+    #[arg(long = "builder.perpdex-modulus", default_value_t = 0)]
+    pub perpdex_modulus: u64,
 }
 
 impl Default for PayloadBuilderArgs {
@@ -49,6 +55,7 @@ impl Default for PayloadBuilderArgs {
             gas_limit: ETHEREUM_BLOCK_GAS_LIMIT_36M,
             deadline: SLOT_DURATION,
             max_payload_tasks: 3,
+            perpdex_modulus: 0,
         }
     }
 }
@@ -72,6 +79,10 @@ impl PayloadBuilderConfig for PayloadBuilderArgs {
 
     fn max_payload_tasks(&self) -> usize {
         self.max_payload_tasks
+    }
+
+    fn perpdex_modulus(&self) -> u64 {
+        self.perpdex_modulus
     }
 }
 

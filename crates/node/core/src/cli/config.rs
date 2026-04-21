@@ -38,6 +38,13 @@ pub trait PayloadBuilderConfig {
     /// Maximum number of tasks to spawn for building a payload.
     fn max_payload_tasks(&self) -> usize;
 
+    /// Modulus used by the PerpDEX-priority packing policy. Non-zero values enable the policy:
+    /// on blocks where `height % modulus != 0`, PerpDEX-targeted transactions pack first and
+    /// non-PerpDEX transactions only fill the remaining gas. `0` (default) disables it.
+    fn perpdex_modulus(&self) -> u64 {
+        0
+    }
+
     /// Returns the configured gas limit if set, or a chain-specific default.
     fn gas_limit_for(&self, chain: Chain) -> u64 {
         if let Some(limit) = self.gas_limit() {
