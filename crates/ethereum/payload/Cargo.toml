@@ -42,3 +42,9 @@ alloy-evm.workspace = true
 
 # misc
 tracing.workspace = true
+
+[dev-dependencies]
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+alloy-primitives = { workspace = true, features = ["rand"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
