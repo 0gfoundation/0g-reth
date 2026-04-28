@@ -55,7 +55,7 @@ pub type ReceiptRootBloom = (B256, Bloom);
 pub type TransactionRoot = B256;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT},
+    constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK},
     transaction::error::InvalidTransactionError,
     Block, GotExpected, GotExpectedBoxed, NodePrimitives, RecoveredBlock, SealedBlock,
     SealedHeader,
@@ -446,11 +446,13 @@ pub enum ConsensusError {
     ///
     /// This error occurs when the child gas limit is less than the specified minimum gas limit.
     #[error(
-        "child gas limit {child_gas_limit} is below the minimum allowed limit ({MINIMUM_GAS_LIMIT})"
+        "child gas limit {child_gas_limit} is below the minimum allowed limit ({minimum_gas_limit})"
     )]
     GasLimitInvalidMinimum {
         /// The child gas limit.
         child_gas_limit: u64,
+        /// The effective minimum gas limit for this block.
+        minimum_gas_limit: u64,
     },
 
     /// Error indicating that the block gas limit is above the allowed maximum.

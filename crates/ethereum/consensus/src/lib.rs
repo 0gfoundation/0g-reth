@@ -298,8 +298,11 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
     use alloy_primitives::B256;
-    use reth_chainspec::{ChainSpec, ChainSpecBuilder};
-    use reth_consensus_common::validation::validate_against_parent_gas_limit;
+    use reth_chainspec::{Chain, ChainSpec, ChainSpecBuilder};
+    use reth_consensus_common::validation::{
+        minimum_gas_limit_fork_timestamp, validate_against_parent_gas_limit,
+        MINIMUM_GAS_LIMIT_POST_FORK, ZG_TESTNET_CHAIN_ID,
+    };
     use reth_ethereum_primitives::{Block as EthBlock, EthPrimitives, Receipt};
     use reth_primitives_traits::{
         constants::{GAS_LIMIT_BOUND_DIVISOR, MINIMUM_GAS_LIMIT},
@@ -329,6 +332,15 @@ mod tests {
         RecoveredBlock::new_unhashed(EthBlock { header, body: Default::default() }, Vec::new())
     }
 
+    fn header_with_gas_limit_and_timestamp(gas_limit: u64, timestamp: u64) -> SealedHeader {
+        let header = reth_primitives_traits::Header { gas_limit, timestamp, ..Default::default() };
+        SealedHeader::new(header, B256::ZERO)
+    }
+
+    fn chain_spec_with_chain_id(chain_id: u64) -> ChainSpec<Header> {
+        ChainSpecBuilder::mainnet().chain(Chain::from_id(chain_id)).build()
+    }
+
     #[test]
     fn test_valid_gas_limit_increase() {
         let parent = header_with_gas_limit(GAS_LIMIT_BOUND_DIVISOR * 10);
@@ -348,9 +360,40 @@ mod tests {
         let child = header_with_gas_limit(MINIMUM_GAS_LIMIT - 1);
 
         assert!(matches!(
-            validate_against_parent_gas_limit(&child, &parent, &ChainSpec::<Header>::default()).unwrap_err(),
-            ConsensusError::GasLimitInvalidMinimum { child_gas_limit }
-                if child_gas_limit == child.gas_limit
+            validate_against_parent_gas_limit(&child, &parent, &ChainSpec::<Header>::default())
+                .unwrap_err(),
+            ConsensusError::GasLimitInvalidMinimum { child_gas_limit, minimum_gas_limit }
+                if child_gas_limit == child.gas_limit && minimum_gas_limit == MINIMUM_GAS_LIMIT
+        ));
+    }
+
+    #[test]
+    fn test_gas_limit_below_minimum_post_fork_default_chain_id() {
+        let chain_spec = ChainSpec::default();
+        let ts = minimum_gas_limit_fork_timestamp(chain_spec.chain_id());
+        let parent = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK, ts);
+        let child = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK - 1, ts);
+
+        assert!(matches!(
+            validate_against_parent_gas_limit(&child, &parent, &chain_spec).unwrap_err(),
+            ConsensusError::GasLimitInvalidMinimum { child_gas_limit, minimum_gas_limit }
+                if child_gas_limit == child.gas_limit &&
+                    minimum_gas_limit == MINIMUM_GAS_LIMIT_POST_FORK
+        ));
+    }
+
+    #[test]
+    fn test_gas_limit_below_minimum_post_fork_chain_16602() {
+        let chain_spec = chain_spec_with_chain_id(ZG_TESTNET_CHAIN_ID);
+        let ts = minimum_gas_limit_fork_timestamp(chain_spec.chain_id());
+        let parent = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK, ts);
+        let child = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK - 1, ts);
+
+        assert!(matches!(
+            validate_against_parent_gas_limit(&child, &parent, &chain_spec).unwrap_err(),
+            ConsensusError::GasLimitInvalidMinimum { child_gas_limit, minimum_gas_limit }
+                if child_gas_limit == child.gas_limit &&
+                    minimum_gas_limit == MINIMUM_GAS_LIMIT_POST_FORK
         ));
     }
 
