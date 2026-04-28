@@ -197,8 +197,11 @@ where
 mod tests {
     use super::*;
     use alloy_primitives::B256;
-    use reth_chainspec::{ChainSpec, ChainSpecBuilder};
-    use reth_consensus_common::validation::validate_against_parent_gas_limit;
+    use reth_chainspec::{Chain, ChainSpec, ChainSpecBuilder};
+    use reth_consensus_common::validation::{
+        minimum_gas_limit_fork_timestamp, validate_against_parent_gas_limit,
+        MINIMUM_GAS_LIMIT_POST_FORK, ZG_TESTNET_CHAIN_ID,
+    };
     use reth_primitives_traits::{
         constants::{GAS_LIMIT_BOUND_DIVISOR, MINIMUM_GAS_LIMIT},
         proofs,
@@ -207,6 +210,15 @@ mod tests {
     fn header_with_gas_limit(gas_limit: u64) -> SealedHeader {
         let header = reth_primitives_traits::Header { gas_limit, ..Default::default() };
         SealedHeader::new(header, B256::ZERO)
+    }
+
+    fn header_with_gas_limit_and_timestamp(gas_limit: u64, timestamp: u64) -> SealedHeader {
+        let header = reth_primitives_traits::Header { gas_limit, timestamp, ..Default::default() };
+        SealedHeader::new(header, B256::ZERO)
+    }
+
+    fn chain_spec_with_chain_id(chain_id: u64) -> ChainSpec {
+        ChainSpecBuilder::mainnet().chain(Chain::from(chain_id)).build()
     }
 
     #[test]
@@ -227,7 +239,42 @@ mod tests {
 
         assert_eq!(
             validate_against_parent_gas_limit(&child, &parent, &ChainSpec::default()),
-            Err(ConsensusError::GasLimitInvalidMinimum { child_gas_limit: child.gas_limit as u64 })
+            Err(ConsensusError::GasLimitInvalidMinimum {
+                child_gas_limit: child.gas_limit as u64,
+                minimum_gas_limit: MINIMUM_GAS_LIMIT,
+            })
+        );
+    }
+
+    #[test]
+    fn test_gas_limit_below_minimum_post_fork_default_chain_id() {
+        let chain_spec = ChainSpec::default();
+        let ts = minimum_gas_limit_fork_timestamp(chain_spec.chain_id());
+        let parent = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK, ts);
+        let child = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK - 1, ts);
+
+        assert_eq!(
+            validate_against_parent_gas_limit(&child, &parent, &chain_spec),
+            Err(ConsensusError::GasLimitInvalidMinimum {
+                child_gas_limit: child.gas_limit as u64,
+                minimum_gas_limit: MINIMUM_GAS_LIMIT_POST_FORK,
+            })
+        );
+    }
+
+    #[test]
+    fn test_gas_limit_below_minimum_post_fork_chain_16602() {
+        let chain_spec = chain_spec_with_chain_id(ZG_TESTNET_CHAIN_ID);
+        let ts = minimum_gas_limit_fork_timestamp(chain_spec.chain_id());
+        let parent = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK, ts);
+        let child = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK - 1, ts);
+
+        assert_eq!(
+            validate_against_parent_gas_limit(&child, &parent, &chain_spec),
+            Err(ConsensusError::GasLimitInvalidMinimum {
+                child_gas_limit: child.gas_limit as u64,
+                minimum_gas_limit: MINIMUM_GAS_LIMIT_POST_FORK,
+            })
         );
     }
 
