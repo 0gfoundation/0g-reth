@@ -119,6 +119,8 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> PayloadBuilderAtt
             prev_randao: attributes.payload_attributes.prev_randao,
             withdrawals: attributes.payload_attributes.withdrawals.unwrap_or_default().into(),
             parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
+            // Optimism does not propagate the 0G bridge SSZ blob.
+            bridge_requests: None,
         };
 
         Ok(Self {

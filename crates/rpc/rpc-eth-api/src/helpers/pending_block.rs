@@ -424,6 +424,9 @@ impl<H: BlockHeader> BuildPendingEnv<H> for NextBlockEnvAttributes {
             gas_limit: parent.gas_limit(),
             parent_beacon_block_root: parent.parent_beacon_block_root().map(|_| B256::ZERO),
             withdrawals: parent.withdrawals_root().map(|_| Default::default()),
+            // Pending-block simulation does not pull bridge messages from the CL — its purpose
+            // is to mirror the local mempool state, not to reproduce CL-driven side effects.
+            bridge_request: None,
         }
     }
 }

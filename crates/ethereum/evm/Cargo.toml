@@ -20,6 +20,7 @@ reth-ethereum-primitives.workspace = true
 revm.workspace = true
 reth-evm.workspace = true
 reth-storage-errors.workspace = true
+reth-0g-bridge.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
@@ -29,6 +30,7 @@ alloy-consensus.workspace = true
 alloy-rpc-types-engine.workspace = true
 
 # Misc
+tracing.workspace = true
 parking_lot = { workspace = true, optional = true }
 derive_more = { workspace = true, optional = true }
 
@@ -57,6 +59,7 @@ std = [
     "derive_more?/std",
     "alloy-rpc-types-engine/std",
     "reth-storage-errors/std",
+    "reth-0g-bridge/std",
 ]
 test-utils = [
     "dep:parking_lot",

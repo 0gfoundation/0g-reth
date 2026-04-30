@@ -3,23 +3,94 @@
 use alloc::{sync::Arc, vec::Vec};
 use alloy_eips::{
     eip4844::BlobTransactionSidecar,
-    eip4895::Withdrawals,
+    eip4895::{Withdrawal, Withdrawals},
     eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
     eip7685::Requests,
 };
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
     ExecutionPayloadEnvelopeV4, ExecutionPayloadEnvelopeV5, ExecutionPayloadFieldV2,
-    ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes, PayloadId,
+    ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as InnerPayloadAttributes,
+    PayloadId,
 };
 use core::convert::Infallible;
 use reth_ethereum_primitives::EthPrimitives;
-use reth_payload_primitives::{BuiltPayload, PayloadBuilderAttributes};
+use reth_payload_primitives::{BuiltPayload, PayloadAttributes, PayloadBuilderAttributes};
 use reth_primitives_traits::{NodePrimitives, SealedBlock};
 
 use crate::BuiltPayloadConversionError;
+
+/// Ethereum payload attributes accepted on `engine_forkchoiceUpdated{V1..V4}`.
+///
+/// Wraps the standard [`alloy_rpc_types_engine::PayloadAttributes`] with an optional 0G
+/// `bridgeRequests` SSZ blob. Pre-Bridge-fork the field MUST be `None` and CL MUST use V3 or
+/// earlier; post-Bridge-fork the field MUST be `Some(bytes)` (where `bytes` is the
+/// SSZ-encoded `BridgeRequests` struct — possibly an empty list, but **never** `None`) and
+/// CL MUST use V4. The blob is forwarded verbatim into the next block's
+/// `executionRequests` `0xf0` entry; the `0xf0` type byte sits in the private 0G namespace
+/// (`0xf0..=0xfe`) to avoid colliding with future Ethereum upstream request types.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EthPayloadAttributes {
+    /// Standard Ethereum engine payload attributes (`timestamp`, `prevRandao`,
+    /// `suggestedFeeRecipient`, `withdrawals`, `parentBeaconBlockRoot`). `flatten`d so the
+    /// JSON shape on the wire matches `engine_forkchoiceUpdatedV3` byte-for-byte when no
+    /// bridge field is present.
+    #[serde(flatten)]
+    pub inner: InnerPayloadAttributes,
+    /// 0G: SSZ-encoded `BridgeRequests` blob (CL → EL).
+    ///
+    /// Required (non-null) on `engine_forkchoiceUpdatedV4`; absent (skipped on serialize and
+    /// defaulted to `None` on deserialize) on V1/V2/V3. The EL passes the bytes through to
+    /// the resulting block's executionRequests `0xf0` entry without recomputing them so the
+    /// proposer's and the verifier's `requestsHash` are byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge_requests: Option<Bytes>,
+}
+
+impl EthPayloadAttributes {
+    /// Build a [`EthPayloadAttributes`] from the standard Ethereum payload attributes plus
+    /// an optional 0G bridge SSZ blob.
+    pub const fn new(inner: InnerPayloadAttributes, bridge_requests: Option<Bytes>) -> Self {
+        Self { inner, bridge_requests }
+    }
+}
+
+impl From<InnerPayloadAttributes> for EthPayloadAttributes {
+    fn from(inner: InnerPayloadAttributes) -> Self {
+        Self::new(inner, None)
+    }
+}
+
+impl core::ops::Deref for EthPayloadAttributes {
+    type Target = InnerPayloadAttributes;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl core::ops::DerefMut for EthPayloadAttributes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl PayloadAttributes for EthPayloadAttributes {
+    fn timestamp(&self) -> u64 {
+        self.inner.timestamp
+    }
+
+    fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
+        self.inner.withdrawals.as_ref()
+    }
+
+    fn parent_beacon_block_root(&self) -> Option<B256> {
+        self.inner.parent_beacon_block_root
+    }
+}
 
 /// Contains the built payload.
 ///
@@ -331,6 +402,10 @@ pub struct EthPayloadBuilderAttributes {
     pub withdrawals: Withdrawals,
     /// Root of the parent beacon block
     pub parent_beacon_block_root: Option<B256>,
+    /// 0G: SSZ-encoded `BridgeRequests` blob carried over `engine_forkchoiceUpdatedV4`. The
+    /// builder forwards these bytes verbatim into the next block's `NextBlockEnvAttributes`
+    /// and `executionRequests` `0xf0` entry; pre-Bridge-fork builds carry `None`.
+    pub bridge_requests: Option<Bytes>,
 }
 
 // === impl EthPayloadBuilderAttributes ===
@@ -343,24 +418,30 @@ impl EthPayloadBuilderAttributes {
 
     /// Creates a new payload builder for the given parent block and the attributes.
     ///
-    /// Derives the unique [`PayloadId`] for the given parent and attributes
-    pub fn new(parent: B256, attributes: PayloadAttributes) -> Self {
+    /// Derives the unique [`PayloadId`] for the given parent and attributes. Accepts either
+    /// the wire-format [`EthPayloadAttributes`] or — via `From<InnerPayloadAttributes>` —
+    /// the standard alloy [`alloy_rpc_types_engine::PayloadAttributes`] which existing
+    /// (pre-Bridge) test infrastructure constructs.
+    pub fn new(parent: B256, attributes: impl Into<EthPayloadAttributes>) -> Self {
+        let attributes = attributes.into();
         let id = payload_id(&parent, &attributes);
+        let EthPayloadAttributes { inner, bridge_requests } = attributes;
 
         Self {
             id,
             parent,
-            timestamp: attributes.timestamp,
-            suggested_fee_recipient: attributes.suggested_fee_recipient,
-            prev_randao: attributes.prev_randao,
-            withdrawals: attributes.withdrawals.unwrap_or_default().into(),
-            parent_beacon_block_root: attributes.parent_beacon_block_root,
+            timestamp: inner.timestamp,
+            suggested_fee_recipient: inner.suggested_fee_recipient,
+            prev_randao: inner.prev_randao,
+            withdrawals: inner.withdrawals.unwrap_or_default().into(),
+            parent_beacon_block_root: inner.parent_beacon_block_root,
+            bridge_requests,
         }
     }
 }
 
 impl PayloadBuilderAttributes for EthPayloadBuilderAttributes {
-    type RpcPayloadAttributes = PayloadAttributes;
+    type RpcPayloadAttributes = EthPayloadAttributes;
     type Error = Infallible;
 
     /// Creates a new payload builder for the given parent block and the attributes.
@@ -368,7 +449,7 @@ impl PayloadBuilderAttributes for EthPayloadBuilderAttributes {
     /// Derives the unique [`PayloadId`] for the given parent and attributes
     fn try_new(
         parent: B256,
-        attributes: PayloadAttributes,
+        attributes: EthPayloadAttributes,
         _version: u8,
     ) -> Result<Self, Infallible> {
         Ok(Self::new(parent, attributes))
@@ -403,10 +484,13 @@ impl PayloadBuilderAttributes for EthPayloadBuilderAttributes {
     }
 }
 
-/// Generates the payload id for the configured payload from the [`PayloadAttributes`].
+/// Generates the payload id for the configured payload from the [`EthPayloadAttributes`].
 ///
-/// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
-pub fn payload_id(parent: &B256, attributes: &PayloadAttributes) -> PayloadId {
+/// Returns an 8-byte identifier by hashing the payload components with sha256 hash. Post-Bridge
+/// the SSZ blob attached on `engine_forkchoiceUpdatedV4.payloadAttributes.bridgeRequests` is
+/// folded into the hash so two FCUs that differ only in bridge content yield distinct payload
+/// ids.
+pub fn payload_id(parent: &B256, attributes: &EthPayloadAttributes) -> PayloadId {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(parent.as_slice());
@@ -423,6 +507,10 @@ pub fn payload_id(parent: &B256, attributes: &PayloadAttributes) -> PayloadId {
         hasher.update(parent_beacon_block);
     }
 
+    if let Some(bridge_requests) = &attributes.bridge_requests {
+        hasher.update(bridge_requests);
+    }
+
     let out = hasher.finalize();
     PayloadId::new(out.as_slice()[..8].try_into().expect("sufficient length"))
 }
@@ -430,14 +518,34 @@ pub fn payload_id(parent: &B256, attributes: &PayloadAttributes) -> PayloadId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_eips::eip4895::Withdrawal;
     use alloy_primitives::B64;
     use core::str::FromStr;
 
+    fn attrs(inner: InnerPayloadAttributes) -> EthPayloadAttributes {
+        EthPayloadAttributes::new(inner, None)
+    }
+
     #[test]
-    fn attributes_serde() {
-        let attributes = r#"{"timestamp":"0x1235","prevRandao":"0xf343b00e02dc34ec0124241f74f32191be28fb370bb48060f5fa4df99bda774c","suggestedFeeRecipient":"0x0000000000000000000000000000000000000000","withdrawals":null,"parentBeaconBlockRoot":null}"#;
-        let _attributes: PayloadAttributes = serde_json::from_str(attributes).unwrap();
+    fn attributes_serde_v3_shape_unchanged() {
+        // Pre-Bridge V3 JSON shape: no `bridgeRequests` field. The wrapper must round-trip
+        // identically (default `None`) so V3-only CLs talk to a V4-capable EL on the same
+        // wire format.
+        let json = r#"{"timestamp":"0x1235","prevRandao":"0xf343b00e02dc34ec0124241f74f32191be28fb370bb48060f5fa4df99bda774c","suggestedFeeRecipient":"0x0000000000000000000000000000000000000000","withdrawals":null,"parentBeaconBlockRoot":null}"#;
+        let attributes: EthPayloadAttributes = serde_json::from_str(json).unwrap();
+        assert!(attributes.bridge_requests.is_none());
+        // Re-serializing must drop the `bridge_requests` key when it's `None`.
+        let reser = serde_json::to_string(&attributes).unwrap();
+        assert!(!reser.contains("bridgeRequests"));
+    }
+
+    #[test]
+    fn attributes_serde_v4_carries_bridge_requests() {
+        let json = r#"{"timestamp":"0x1235","prevRandao":"0xf343b00e02dc34ec0124241f74f32191be28fb370bb48060f5fa4df99bda774c","suggestedFeeRecipient":"0x0000000000000000000000000000000000000000","withdrawals":[],"parentBeaconBlockRoot":"0x2222222222222222222222222222222222222222222222222222222222222222","bridgeRequests":"0x04000000"}"#;
+        let attributes: EthPayloadAttributes = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            attributes.bridge_requests,
+            Some(Bytes::from_static(&[0x04, 0x00, 0x00, 0x00]))
+        );
     }
 
     #[test]
@@ -446,7 +554,7 @@ mod tests {
         let parent =
             B256::from_str("0x3b8fb240d288781d4aac94d3fd16809ee413bc99294a085798a589dae51ddd4a")
                 .unwrap();
-        let attributes = PayloadAttributes {
+        let attributes = attrs(InnerPayloadAttributes {
             timestamp: 0x5,
             prev_randao: B256::from_str(
                 "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -458,9 +566,10 @@ mod tests {
             .unwrap(),
             withdrawals: None,
             parent_beacon_block_root: None,
-        };
+        });
 
-        // Verify that the generated payload ID matches the expected value
+        // Verify that the generated payload ID matches the expected value (unchanged from
+        // pre-Bridge: `bridge_requests = None` is folded into the hash as a no-op).
         assert_eq!(
             payload_id(&parent, &attributes),
             PayloadId(B64::from_str("0xa247243752eb10b4").unwrap())
@@ -473,7 +582,7 @@ mod tests {
         let parent =
             B256::from_str("0x9876543210abcdef9876543210abcdef9876543210abcdef9876543210abcdef")
                 .unwrap();
-        let attributes = PayloadAttributes {
+        let attributes = attrs(InnerPayloadAttributes {
             timestamp: 1622553200,
             prev_randao: B256::from_slice(&[1; 32]),
             suggested_fee_recipient: Address::from_str(
@@ -495,7 +604,7 @@ mod tests {
                 },
             ]),
             parent_beacon_block_root: None,
-        };
+        });
 
         // Verify that the generated payload ID matches the expected value
         assert_eq!(
@@ -510,7 +619,7 @@ mod tests {
         let parent =
             B256::from_str("0x9876543210abcdef9876543210abcdef9876543210abcdef9876543210abcdef")
                 .unwrap();
-        let attributes = PayloadAttributes {
+        let attributes = attrs(InnerPayloadAttributes {
             timestamp: 1622553200,
             prev_randao: B256::from_str(
                 "0x123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234",
@@ -527,12 +636,44 @@ mod tests {
                 )
                 .unwrap(),
             ),
-        };
+        });
 
         // Verify that the generated payload ID matches the expected value
         assert_eq!(
             payload_id(&parent, &attributes),
             PayloadId(B64::from_str("0x0fc49cd532094cce").unwrap())
         );
+    }
+
+    #[test]
+    fn test_payload_id_diverges_on_bridge_requests() {
+        // Two attributes that differ only in `bridge_requests` MUST produce different
+        // payload ids — otherwise the EL would conflate two distinct CL builds (e.g. round 0
+        // empty vs. round 1 with messages) under one cached payload.
+        let parent =
+            B256::from_str("0x3b8fb240d288781d4aac94d3fd16809ee413bc99294a085798a589dae51ddd4a")
+                .unwrap();
+        let inner = InnerPayloadAttributes {
+            timestamp: 0x5,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Address::from_str(
+                "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+            )
+            .unwrap(),
+            withdrawals: None,
+            parent_beacon_block_root: None,
+        };
+        let id_no_bridge = payload_id(&parent, &EthPayloadAttributes::new(inner.clone(), None));
+        let id_empty_bridge = payload_id(
+            &parent,
+            &EthPayloadAttributes::new(inner.clone(), Some(Bytes::from_static(&[0, 0, 0, 0]))),
+        );
+        let id_with_bridge = payload_id(
+            &parent,
+            &EthPayloadAttributes::new(inner, Some(Bytes::from_static(&[1, 2, 3, 4]))),
+        );
+        assert_ne!(id_no_bridge, id_empty_bridge);
+        assert_ne!(id_empty_bridge, id_with_bridge);
+        assert_ne!(id_no_bridge, id_with_bridge);
     }
 }

@@ -826,3 +826,316 @@ fn test_balance_increment_not_duplicated() {
         );
     }
 }
+
+mod bridge_tests {
+    //! 0G bridge system call integration tests. Verifies that:
+    //!
+    //! 1. With a configured `bridge_contract_address`, a `bridge_activation_time` already in
+    //!    the past, and a `bridge_request` calldata blob attached to the execution context,
+    //!    `EthBlockExecutor::finish` issues a `transact_system_call` to the bridge address.
+    //! 2. The system call passes the calldata through verbatim (we observe it via a stub
+    //!    contract that copies calldata into storage).
+    //! 3. With the bridge fork inactive, the system call is suppressed even when calldata
+    //!    is attached.
+    //!
+    //! Deeper end-to-end coverage (full engine API + payload validation) belongs in
+    //! `crates/ethereum/node/tests/it/`; this file stays at the executor boundary.
+    use super::*;
+    use alloy_consensus::Header;
+    use alloy_eips::eip4895::Withdrawals;
+    use alloy_evm::eth::EthBlockExecutionCtx;
+    use alloy_primitives::{address, Address, Bytes, U256};
+    use reth_chainspec::ChainSpec;
+    use reth_evm::{
+        execute::{BlockExecutor, BlockExecutorFactory},
+        ConfigureEvm,
+    };
+    use revm::{
+        database::{CacheDB, EmptyDB, State},
+        primitives::HashMap,
+        state::{AccountInfo, Bytecode},
+    };
+    use std::{borrow::Cow, sync::Arc};
+
+    const BRIDGE_ADDR: Address = address!("0x00000000000000000000000000000000000000B0");
+
+    /// Returns the runtime bytecode of a tiny stub contract that, on any call:
+    ///   * Copies the first 32 bytes of calldata into storage slot 0
+    ///   * Stores `calldatasize()` into storage slot 1
+    ///   * Returns nothing
+    ///
+    /// This lets the test observe whether the system call fired (slot 0 != 0) and that the
+    /// calldata pass-through was complete (slot 1 == ABI calldata length).
+    ///
+    /// Bytecode (hand-assembled, 13 bytes):
+    ///   PUSH1 0x00 CALLDATALOAD       // [data0]
+    ///   PUSH1 0x00 SSTORE              // store at slot 0
+    ///   CALLDATASIZE                   // [size]
+    ///   PUSH1 0x01 SSTORE              // store at slot 1
+    ///   STOP
+    fn stub_bridge_bytecode() -> Bytes {
+        Bytes::from_static(&[
+            0x60, 0x00, // PUSH1 0
+            0x35, // CALLDATALOAD
+            0x60, 0x00, // PUSH1 0
+            0x55, // SSTORE (slot 0 <- first 32 bytes of calldata)
+            0x36, // CALLDATASIZE
+            0x60, 0x01, // PUSH1 1
+            0x55, // SSTORE (slot 1 <- calldatasize)
+            0x00, // STOP
+        ])
+    }
+
+    fn build_chain_spec(bridge_active: bool) -> Arc<ChainSpec> {
+        // Start from a Prague-activated mainnet builder, then explicitly set the bridge
+        // fields. We can't go through the builder for these (no public setter), so we
+        // mutate the resulting spec post-build.
+        let inner = ChainSpecBuilder::from(&*MAINNET)
+            .shanghai_activated()
+            .cancun_activated()
+            .prague_activated()
+            .build();
+        // The builder returns a struct we can clone-and-mutate.
+        let mut spec = inner;
+        if bridge_active {
+            spec.bridge_contract_address = Some(BRIDGE_ADDR);
+            // `1` so any timestamp >= 1 activates the fork.
+            spec.bridge_activation_time = 1;
+        } else {
+            spec.bridge_contract_address = Some(BRIDGE_ADDR);
+            spec.bridge_activation_time = 0; // 0 means permanently disabled
+        }
+        Arc::new(spec)
+    }
+
+    fn database_with_bridge_stub() -> CacheDB<EmptyDB> {
+        let mut db = CacheDB::new(EmptyDB::default());
+        let code = Bytecode::new_raw(stub_bridge_bytecode());
+        db.insert_account_info(
+            BRIDGE_ADDR,
+            AccountInfo {
+                nonce: 1,
+                balance: U256::ZERO,
+                code_hash: keccak256(stub_bridge_bytecode()),
+                code: Some(code),
+            },
+        );
+        db
+    }
+
+    /// Drives a single empty block through the executor with the supplied bridge context.
+    /// Returns the final state of the bridge contract's storage slots 0 and 1.
+    fn run_with_bridge_ctx(
+        spec: Arc<ChainSpec>,
+        bridge_calldata: Option<Bytes>,
+    ) -> (U256, U256) {
+        let provider = EthEvmConfig::new(spec.clone());
+
+        // Empty block, post-Prague.
+        let header = Header {
+            timestamp: 100,
+            number: 1,
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(B256::ZERO),
+            ..Header::default()
+        };
+
+        let db = database_with_bridge_stub();
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+
+        let evm = provider.evm_for_block(&mut state, &header);
+        let ctx = EthBlockExecutionCtx {
+            parent_hash: header.parent_hash,
+            parent_beacon_block_root: header.parent_beacon_block_root,
+            ommers: &[],
+            withdrawals: Some(Cow::Owned(Withdrawals::new(vec![]))),
+            timestamp: header.timestamp,
+            bridge_request: bridge_calldata.map(Cow::Owned),
+            // This test exercises only the bridge system call's storage side-effects, not the
+            // returned `requests` list. `None` here keeps the test focused; the 0xf0 push path
+            // is exercised end-to-end by §2.F integration tests.
+            bridge_request_raw: None,
+        };
+
+        let executor = provider.block_executor_factory().create_executor(evm, ctx);
+
+        // No transactions; just exercise pre/post-execution hooks.
+        let mut executor = executor;
+        BlockExecutor::apply_pre_execution_changes(&mut executor)
+            .expect("pre-execution should succeed");
+        let _ = BlockExecutor::finish(executor).expect("finish should succeed");
+
+        // Read slots 0 and 1 from the persisted bridge contract storage. Pre-load the
+        // account so `storage()` doesn't trip its "must be loaded first" assertion on the
+        // skip paths where the system call never touched it.
+        let _ = state.merge_transitions(revm::database::states::bundle_state::BundleRetention::Reverts);
+        let _ = state.basic(BRIDGE_ADDR);
+        let slot0 = state.storage(BRIDGE_ADDR, U256::ZERO).unwrap_or_default();
+        let slot1 = state.storage(BRIDGE_ADDR, U256::from(1u64)).unwrap_or_default();
+        (slot0, slot1)
+    }
+
+    #[test]
+    fn bridge_call_fires_when_active_with_calldata() {
+        let spec = build_chain_spec(true);
+        // Calldata: 32 bytes of 0xAB followed by a 4-byte tail. Slot 0 should hold
+        // 0xAB.. (first 32 bytes); slot 1 should hold 36.
+        let mut cd: Vec<u8> = vec![0xAB; 32];
+        cd.extend_from_slice(&[1, 2, 3, 4]);
+        let cd_len = cd.len();
+        let (slot0, slot1) = run_with_bridge_ctx(spec, Some(Bytes::from(cd)));
+
+        assert_eq!(
+            slot0,
+            U256::from_be_bytes::<32>([0xAB; 32]),
+            "stub should have stored the first 32 bytes of calldata"
+        );
+        assert_eq!(slot1, U256::from(cd_len as u64), "stub should record calldata length");
+    }
+
+    #[test]
+    fn bridge_call_skipped_when_fork_inactive() {
+        let spec = build_chain_spec(false); // bridge_activation_time = 0 -> always inactive
+        let cd = vec![0xCD; 64];
+        let (slot0, slot1) = run_with_bridge_ctx(spec, Some(Bytes::from(cd)));
+        assert_eq!(slot0, U256::ZERO, "fork inactive: no system call");
+        assert_eq!(slot1, U256::ZERO, "fork inactive: no system call");
+    }
+
+    #[test]
+    fn bridge_call_skipped_when_no_calldata_attached() {
+        let spec = build_chain_spec(true); // active
+        let (slot0, slot1) = run_with_bridge_ctx(spec, None);
+        assert_eq!(slot0, U256::ZERO, "no calldata: no system call");
+        assert_eq!(slot1, U256::ZERO, "no calldata: no system call");
+    }
+
+    #[test]
+    fn bridge_calldata_is_passed_through_verbatim() {
+        // Build real ABI calldata via the bridge crate and verify the stub sees the same
+        // selector + payload.
+        use reth_0g_bridge::{encode_execute_remote_messages_calldata, BridgeMessage};
+
+        let spec = build_chain_spec(true);
+        let local_chain_id = spec.chain.id();
+        let msg = BridgeMessage {
+            src_chain_id: 16700,
+            dst_chain_id: local_chain_id,
+            nonce: 1,
+            local_token: alloy_primitives::FixedBytes([0x11; 20]),
+            recipient: alloy_primitives::FixedBytes([0x22; 20]),
+            amount: alloy_primitives::FixedBytes(U256::from(42u64).to_be_bytes::<32>()),
+            mode: 1,
+            src_block: 7,
+        };
+        let cd = encode_execute_remote_messages_calldata(&[msg], local_chain_id);
+        let expected_first_word = U256::from_be_bytes::<32>(
+            // ABI calldata starts with 4-byte selector + zero-padded args. The first 32
+            // bytes are the 4-byte selector left-aligned, padded with the head of the
+            // args tuple-encoding.
+            cd[..32].try_into().unwrap(),
+        );
+        let (slot0, _slot1) = run_with_bridge_ctx(spec, Some(cd));
+        assert_eq!(
+            slot0, expected_first_word,
+            "bridge calldata first 32 bytes must match what we encoded"
+        );
+    }
+
+    /// Runs an empty post-Prague block through the executor and returns `BlockExecutionResult.requests`
+    /// so callers can assert on the EIP-7685 entries `EthBlockExecutor::finish` produced.
+    ///
+    /// Distinct from [`run_with_bridge_ctx`] which only inspects bridge-contract storage. These
+    /// tests target the `0xf0` entry append path introduced to fix the block-hash mismatch
+    /// where the sealed `requests_hash` excluded `0xf0` while the wire response included it.
+    fn finish_requests_with_raw(
+        spec: Arc<ChainSpec>,
+        bridge_calldata: Option<Bytes>,
+        bridge_request_raw: Option<Bytes>,
+    ) -> alloy_eips::eip7685::Requests {
+        let provider = EthEvmConfig::new(spec.clone());
+        let header = Header {
+            timestamp: 100,
+            number: 1,
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(B256::ZERO),
+            ..Header::default()
+        };
+        let db = database_with_bridge_stub();
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let evm = provider.evm_for_block(&mut state, &header);
+        let ctx = EthBlockExecutionCtx {
+            parent_hash: header.parent_hash,
+            parent_beacon_block_root: header.parent_beacon_block_root,
+            ommers: &[],
+            withdrawals: Some(Cow::Owned(Withdrawals::new(vec![]))),
+            timestamp: header.timestamp,
+            bridge_request: bridge_calldata.map(Cow::Owned),
+            bridge_request_raw: bridge_request_raw.map(Cow::Owned),
+        };
+        let mut executor = provider.block_executor_factory().create_executor(evm, ctx);
+        BlockExecutor::apply_pre_execution_changes(&mut executor)
+            .expect("pre-execution should succeed");
+        let (_evm, result) = BlockExecutor::finish(executor).expect("finish should succeed");
+        result.requests
+    }
+
+    #[test]
+    fn finish_appends_0xf0_entry_when_raw_attached() {
+        // Prague active + bridge_request_raw=Some(bytes) → returned `requests` must end with
+        // `0xf0 || bytes`. This is the build-path invariant: `EthBlockAssembler` consumes this
+        // `requests` to compute `requests_hash` for the sealed block header — if the entry is
+        // missing here, the proposer-built `block.block_hash` will not match the wire requests
+        // list and the CL rejects the block (the bug §2.F caught).
+        let spec = build_chain_spec(true);
+        let raw = Bytes::from_static(&[0x04, 0x00, 0x00, 0x00]); // SSZ empty-list sentinel (4 bytes)
+        let requests = finish_requests_with_raw(spec, None, Some(raw.clone()));
+        let entries: Vec<&[u8]> = requests.iter().map(|b| b.as_ref()).collect();
+        assert!(
+            entries.iter().any(|e| e.first() == Some(&0xf0) && &e[1..] == raw.as_ref()),
+            "post-Prague + bridge_request_raw=Some must produce 0xf0||bytes entry; got {:?}",
+            entries
+        );
+    }
+
+    #[test]
+    fn finish_omits_0xf0_entry_when_raw_none() {
+        // Prague active but bridge_request_raw=None → no 0xf0 entry emitted. This is the replay
+        // path (`context_for_block` always sets None) and any pre-Bridge-fork scenario.
+        let spec = build_chain_spec(true);
+        let requests = finish_requests_with_raw(spec, None, None);
+        let entries: Vec<&[u8]> = requests.iter().map(|b| b.as_ref()).collect();
+        assert!(
+            entries.iter().all(|e| e.first() != Some(&0xf0)),
+            "bridge_request_raw=None must NOT push 0xf0 entry; got {:?}",
+            entries
+        );
+    }
+
+    #[test]
+    fn finish_appends_0xf0_after_pectra_types() {
+        // EIP-7685 requires monotonically increasing type bytes. Our 0xf0 entry must come
+        // strictly after any 0x00/0x01/0x02 entries the standard EIP-6110/7002/7251 path
+        // produces. The empty-block test fixture here has no deposits/withdrawals/consolidations,
+        // so the runtime ordering check trivially holds — but we lock in the contract by
+        // confirming 0xf0 is the **last** entry whenever it's emitted.
+        let spec = build_chain_spec(true);
+        let raw = Bytes::from_static(&[0x04, 0x00, 0x00, 0x00, 0xDE, 0xAD]);
+        let requests = finish_requests_with_raw(spec, None, Some(raw));
+        let last = requests.iter().last().expect("at least one request entry");
+        assert_eq!(last.first(), Some(&0xf0), "0xf0 entry must be last; got {:?}", last);
+        // Sanity: every other entry's type byte (if any) is < 0xf0.
+        let mut prev = 0u8;
+        for entry in requests.iter() {
+            let ty = entry.first().copied().expect("non-empty entry");
+            assert!(ty > prev, "type bytes not strictly ascending: {ty:#x} after {prev:#x}");
+            prev = ty;
+        }
+    }
+
+    // Silence dead-code checks in this submodule for utilities used selectively.
+    #[allow(dead_code)]
+    fn _unused() -> HashMap<Address, AccountInfo> {
+        HashMap::default()
+    }
+}

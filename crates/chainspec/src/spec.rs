@@ -114,6 +114,8 @@ pub static MAINNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
         ]),
         staking_contract_address: None,
         staking_activation_time: 0,
+        bridge_contract_address: None,
+        bridge_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -148,6 +150,8 @@ pub static SEPOLIA: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
         ]),
         staking_contract_address: None,
         staking_activation_time: 0,
+        bridge_contract_address: None,
+        bridge_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -180,6 +184,8 @@ pub static HOLESKY: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
         ]),
         staking_contract_address: None,
         staking_activation_time: 0,
+        bridge_contract_address: None,
+        bridge_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -214,6 +220,8 @@ pub static HOODI: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
         ]),
         staking_contract_address: None,
         staking_activation_time: 0,
+        bridge_contract_address: None,
+        bridge_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
     spec.into()
@@ -323,6 +331,15 @@ pub struct ChainSpec {
     pub staking_contract_address: Option<Address>,
 
     pub staking_activation_time: u64,
+
+    /// 0G bridge proxy contract address (hex-encoded `bridgeContractAddress` in genesis JSON).
+    ///
+    /// Must match the `BridgeContractAddress` field on the corresponding CL chainspec.
+    pub bridge_contract_address: Option<Address>,
+
+    /// Unix timestamp at which the 0G bridge fork activates (`bridgeForkTime` in genesis JSON).
+    /// `0` means "never active". A non-zero value gates `executeRemoteMessages` system calls.
+    pub bridge_activation_time: u64,
 }
 
 impl Default for ChainSpec {
@@ -339,6 +356,8 @@ impl Default for ChainSpec {
             blob_params: Default::default(),
             staking_contract_address: None,
             staking_activation_time: 0,
+            bridge_contract_address: None,
+            bridge_activation_time: 0,
         }
     }
 }
@@ -736,6 +755,21 @@ impl From<Genesis> for ChainSpec {
             DepositContract { address, block: 0, topic: MAINNET_DEPOSIT_CONTRACT.topic }
         });
 
+        // 0G bridge fork config — read from genesis JSON `config.bridgeContractAddress` (hex)
+        // and `config.bridgeForkTime` (u64 unix timestamp). Both are optional; if either is
+        // missing the bridge stays disabled (default `None`/`0`).
+        let bridge_contract_address = genesis
+            .config
+            .extra_fields
+            .get_deserialized::<Address>("bridgeContractAddress")
+            .and_then(|r| r.ok());
+        let bridge_activation_time = genesis
+            .config
+            .extra_fields
+            .get_deserialized::<u64>("bridgeForkTime")
+            .and_then(|r| r.ok())
+            .unwrap_or(0);
+
         let hardforks = ChainHardforks::new(ordered_hardforks);
 
         Self {
@@ -749,6 +783,8 @@ impl From<Genesis> for ChainSpec {
             staking_contract_address: Some(address!("0xea224dBB52F57752044c0C86aD50930091F561B9")),
             staking_activation_time: 1769558400, // 2026-01-28 0:00:00 UTC [Mainnet Config]
             // staking_activation_time: 1767830400, // 2026-01-08 0:00:00 UTC [Testnet Config]
+            bridge_contract_address,
+            bridge_activation_time,
             ..Default::default()
         }
     }
@@ -1034,6 +1070,17 @@ impl EthExecutorSpec for ChainSpec {
 
     fn is_staking_activate_at_timestamp(&self, timestamp: u64) -> bool {
         self.staking_activation_time <= timestamp
+    }
+
+    fn bridge_contract_address(&self) -> Option<Address> {
+        self.bridge_contract_address
+    }
+
+    /// Bridge fork is active when an explicit non-zero `bridge_activation_time` has been
+    /// reached. `0` (the default) means the fork is permanently disabled — distinct from the
+    /// staking-distribution flag which uses `<= timestamp` and is "always active" by default.
+    fn is_bridge_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.bridge_activation_time > 0 && timestamp >= self.bridge_activation_time
     }
 }
 
