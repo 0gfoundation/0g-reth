@@ -301,16 +301,29 @@ where
         // Decoding errors degrade to `None` (no system call); a malformed blob would have
         // failed CL-side payload validation upstream, but treating it as a build-time hard
         // error would prevent the EL from making any progress at all.
+        // 0G bridge fee path: the same address that the EVM will use as `block.coinbase` —
+        // post-MinerReward fork, CL writes `withdrawals[0].Address` (proposer's withdrawal
+        // address) into `attrs.suggested_fee_recipient`. We thread this into every
+        // `InboundMessage.feeRecipient` so the dest-chain Bridge can pay the per-message fee
+        // to the dest-block proposer. The verifier path in `context_for_payload` sources the
+        // identical address from `payload.beneficiary` (the block-header coinbase), giving
+        // build/verify byte-equal calldata.
+        let fee_recipient = attributes.suggested_fee_recipient;
         let bridge_calldata = attributes.bridge_request.as_ref().and_then(|raw| {
             match reth_0g_bridge::decode_bridge_messages(raw) {
                 Ok(msgs) => {
                     let chain_id = self.chain_spec().chain().id();
-                    let cd = reth_0g_bridge::encode_execute_remote_messages_calldata(&msgs, chain_id);
+                    let cd = reth_0g_bridge::encode_execute_remote_messages_calldata(
+                        &msgs,
+                        chain_id,
+                        fee_recipient,
+                    );
                     tracing::debug!(
                         target: "0g::evm::bridge",
                         ssz_len = raw.len(),
                         msg_count = msgs.len(),
                         calldata_len = cd.len(),
+                        ?fee_recipient,
                         "context_for_next_block: decoded bridge SSZ to ABI calldata (build path)"
                     );
                     Some(Cow::Owned(cd))
@@ -421,8 +434,7 @@ where
         // Decoding errors from CL-emitted bytes degrade to `None` (no system call); a
         // misbehaving CL would already have failed payload validation upstream.
         // Locate the `0xf0` entry once and reuse for both fields below.
-        let sidecar_requests_count =
-            payload.sidecar.requests().map_or(0, |r| r.iter().count());
+        let sidecar_requests_count = payload.sidecar.requests().map_or(0, |r| r.iter().count());
         let bridge_entry: Option<&[u8]> = payload
             .sidecar
             .requests()
@@ -431,16 +443,27 @@ where
             })
             .map(|entry| &entry[1..]);
 
+        // 0G bridge fee path: source the dest-block coinbase from the payload's fee_recipient
+        // (== block-header `beneficiary` post-merge). This is byte-equal to the build path's
+        // `attrs.suggested_fee_recipient` because the proposer pinned that address into the
+        // header it sealed, and we don't recompute it here. Calldata produced on this path
+        // matches the proposer's calldata byte-for-byte.
+        let fee_recipient = payload.payload.fee_recipient();
         let bridge_calldata: Option<Cow<'a, Bytes>> = bridge_entry
             .and_then(|raw| match reth_0g_bridge::decode_bridge_messages(raw) {
                 Ok(msgs) => {
                     let chain_id = self.chain_spec().chain().id();
-                    let cd = reth_0g_bridge::encode_execute_remote_messages_calldata(&msgs, chain_id);
+                    let cd = reth_0g_bridge::encode_execute_remote_messages_calldata(
+                        &msgs,
+                        chain_id,
+                        fee_recipient,
+                    );
                     tracing::debug!(
                         target: "0g::evm::bridge",
                         ssz_len = raw.len(),
                         msg_count = msgs.len(),
                         calldata_len = cd.len(),
+                        ?fee_recipient,
                         "context_for_payload: decoded bridge SSZ to ABI calldata (verify path)"
                     );
                     Some(cd)

@@ -830,13 +830,13 @@ fn test_balance_increment_not_duplicated() {
 mod bridge_tests {
     //! 0G bridge system call integration tests. Verifies that:
     //!
-    //! 1. With a configured `bridge_contract_address`, a `bridge_activation_time` already in
-    //!    the past, and a `bridge_request` calldata blob attached to the execution context,
+    //! 1. With a configured `bridge_contract_address`, a `bridge_activation_time` already in the
+    //!    past, and a `bridge_request` calldata blob attached to the execution context,
     //!    `EthBlockExecutor::finish` issues a `transact_system_call` to the bridge address.
-    //! 2. The system call passes the calldata through verbatim (we observe it via a stub
-    //!    contract that copies calldata into storage).
-    //! 3. With the bridge fork inactive, the system call is suppressed even when calldata
-    //!    is attached.
+    //! 2. The system call passes the calldata through verbatim (we observe it via a stub contract
+    //!    that copies calldata into storage).
+    //! 3. With the bridge fork inactive, the system call is suppressed even when calldata is
+    //!    attached.
     //!
     //! Deeper end-to-end coverage (full engine API + payload validation) belongs in
     //! `crates/ethereum/node/tests/it/`; this file stays at the executor boundary.
@@ -925,10 +925,7 @@ mod bridge_tests {
 
     /// Drives a single empty block through the executor with the supplied bridge context.
     /// Returns the final state of the bridge contract's storage slots 0 and 1.
-    fn run_with_bridge_ctx(
-        spec: Arc<ChainSpec>,
-        bridge_calldata: Option<Bytes>,
-    ) -> (U256, U256) {
+    fn run_with_bridge_ctx(spec: Arc<ChainSpec>, bridge_calldata: Option<Bytes>) -> (U256, U256) {
         let provider = EthEvmConfig::new(spec.clone());
 
         // Empty block, post-Prague.
@@ -968,7 +965,8 @@ mod bridge_tests {
         // Read slots 0 and 1 from the persisted bridge contract storage. Pre-load the
         // account so `storage()` doesn't trip its "must be loaded first" assertion on the
         // skip paths where the system call never touched it.
-        let _ = state.merge_transitions(revm::database::states::bundle_state::BundleRetention::Reverts);
+        let _ =
+            state.merge_transitions(revm::database::states::bundle_state::BundleRetention::Reverts);
         let _ = state.basic(BRIDGE_ADDR);
         let slot0 = state.storage(BRIDGE_ADDR, U256::ZERO).unwrap_or_default();
         let slot1 = state.storage(BRIDGE_ADDR, U256::from(1u64)).unwrap_or_default();
@@ -1028,7 +1026,8 @@ mod bridge_tests {
             mode: 1,
             src_block: 7,
         };
-        let cd = encode_execute_remote_messages_calldata(&[msg], local_chain_id);
+        let fee_recipient = address!("0x00000000000000000000000000000000000000Fe");
+        let cd = encode_execute_remote_messages_calldata(&[msg], local_chain_id, fee_recipient);
         let expected_first_word = U256::from_be_bytes::<32>(
             // ABI calldata starts with 4-byte selector + zero-padded args. The first 32
             // bytes are the 4-byte selector left-aligned, padded with the head of the
@@ -1042,8 +1041,9 @@ mod bridge_tests {
         );
     }
 
-    /// Runs an empty post-Prague block through the executor and returns `BlockExecutionResult.requests`
-    /// so callers can assert on the EIP-7685 entries `EthBlockExecutor::finish` produced.
+    /// Runs an empty post-Prague block through the executor and returns
+    /// `BlockExecutionResult.requests` so callers can assert on the EIP-7685 entries
+    /// `EthBlockExecutor::finish` produced.
     ///
     /// Distinct from [`run_with_bridge_ctx`] which only inspects bridge-contract storage. These
     /// tests target the `0xf0` entry append path introduced to fix the block-hash mismatch
@@ -1131,6 +1131,167 @@ mod bridge_tests {
             assert!(ty > prev, "type bytes not strictly ascending: {ty:#x} after {prev:#x}");
             prev = ty;
         }
+    }
+
+    /// Build path: `EthEvmConfig::context_for_next_block` must thread
+    /// `attributes.suggested_fee_recipient` into every `InboundMessage.feeRecipient` of the
+    /// resulting ABI calldata. This is the proposer-side wiring of the dest-chain block
+    /// proposer's withdrawal address into the bridge fee distribution.
+    #[test]
+    fn bridge_call_uses_attributes_suggested_fee_recipient_in_build_path() {
+        use alloy_primitives::FixedBytes;
+        use alloy_sol_types::SolCall;
+        use reth_0g_bridge::{encode::executeRemoteMessagesCall, BridgeMessage, BridgeRequests};
+        use reth_evm::NextBlockEnvAttributes;
+        use reth_primitives_traits::SealedHeader;
+        use ssz::Encode;
+
+        let spec = build_chain_spec(true);
+        let local_chain_id = spec.chain.id();
+        let provider = EthEvmConfig::new(spec);
+
+        // Pick a non-zero, non-default address so a missing wire-up surfaces clearly.
+        const SUGGESTED: Address = address!("0xCafeBabeCafeBabeCafeBabeCafeBabeCafeBabe");
+
+        // CL-style SSZ blob: one BridgeMessage targeted at the local chain.
+        let msg = BridgeMessage {
+            src_chain_id: 16700,
+            dst_chain_id: local_chain_id,
+            nonce: 1,
+            local_token: FixedBytes([0x11; 20]),
+            recipient: FixedBytes([0x22; 20]),
+            amount: FixedBytes(U256::from(42u64).to_be_bytes::<32>()),
+            mode: 1,
+            src_block: 7,
+        };
+        let ssz = BridgeRequests { messages: vec![msg] }.as_ssz_bytes();
+
+        // Minimal sealed parent header — `context_for_next_block` only reads `parent_hash`
+        // off the parent (the rest of the EVM env is sourced from `attributes`).
+        let parent = SealedHeader::seal_slow(Header::default());
+
+        let attrs = NextBlockEnvAttributes {
+            timestamp: 100,
+            suggested_fee_recipient: SUGGESTED,
+            prev_randao: B256::ZERO,
+            gas_limit: 30_000_000,
+            parent_beacon_block_root: Some(B256::ZERO),
+            withdrawals: None,
+            bridge_request: Some(Bytes::from(ssz)),
+        };
+
+        let ctx = provider.context_for_next_block(&parent, attrs);
+        let cd = ctx.bridge_request.as_deref().expect("build path produces calldata");
+
+        let decoded = executeRemoteMessagesCall::abi_decode(cd.as_ref()).expect("calldata decodes");
+        assert_eq!(decoded.msgs.len(), 1, "one InboundMessage");
+        assert_eq!(
+            decoded.msgs[0].feeRecipient, SUGGESTED,
+            "InboundMessage.feeRecipient must be sourced from attributes.suggested_fee_recipient"
+        );
+    }
+
+    /// Verify path: `EthEvmConfig::context_for_payload` must source the per-message
+    /// `feeRecipient` from `payload.fee_recipient()` (the block-header `beneficiary`). This
+    /// is byte-equal to what the proposer's build path produces when CL pins the same
+    /// address into both `attrs.suggested_fee_recipient` and the sealed coinbase
+    /// (post-MinerReward fork invariant). Any drift here breaks `requests_hash` consistency
+    /// and the dest CL would reject the block.
+    #[test]
+    fn bridge_call_uses_payload_beneficiary_in_verify_path_byte_equal_to_build() {
+        use alloy_eips::eip7685::Requests;
+        use alloy_primitives::FixedBytes;
+        use alloy_rpc_types_engine::{
+            CancunPayloadFields, ExecutionData, ExecutionPayloadSidecar, ExecutionPayloadV3,
+            PraguePayloadFields,
+        };
+        use alloy_sol_types::SolCall;
+        use reth_0g_bridge::{
+            encode::executeRemoteMessagesCall, BridgeMessage, BridgeRequests, BRIDGE_REQUEST_TYPE,
+        };
+        use reth_ethereum_primitives::{Block, BlockBody};
+        use reth_evm::ConfigureEngineEvm;
+        use ssz::Encode;
+
+        let spec = build_chain_spec(true);
+        let local_chain_id = spec.chain.id();
+        let provider = EthEvmConfig::new(spec);
+
+        // Same fee-recipient pinned on both sides (proposer attrs and block header). In
+        // production this byte-equality is guaranteed by the post-MinerReward fork: CL
+        // writes `withdrawals[0].Address` into `attrs.suggested_fee_recipient`, and the EL
+        // pins that into `block.header.beneficiary` when sealing.
+        const PROPOSER_X: Address = address!("0x00112233445566778899AABBCCDDEEFF00112233");
+
+        let msg = BridgeMessage {
+            src_chain_id: 16700,
+            dst_chain_id: local_chain_id,
+            nonce: 1,
+            local_token: FixedBytes([0x11; 20]),
+            recipient: FixedBytes([0x22; 20]),
+            amount: FixedBytes(U256::from(42u64).to_be_bytes::<32>()),
+            mode: 1,
+            src_block: 7,
+        };
+        let ssz_bytes = BridgeRequests { messages: vec![msg.clone()] }.as_ssz_bytes();
+        let mut entry_0xf0 = Vec::with_capacity(1 + ssz_bytes.len());
+        entry_0xf0.push(BRIDGE_REQUEST_TYPE);
+        entry_0xf0.extend_from_slice(&ssz_bytes);
+
+        // Build a minimal block with the proposer-coinbase pinned. Only fields touched by
+        // `ExecutionPayloadV3::from_block_unchecked` and `context_for_payload` matter.
+        let header = Header {
+            beneficiary: PROPOSER_X,
+            timestamp: 100,
+            number: 1,
+            excess_blob_gas: Some(0),
+            blob_gas_used: Some(0),
+            parent_beacon_block_root: Some(B256::ZERO),
+            withdrawals_root: Some(B256::ZERO),
+            ..Header::default()
+        };
+        let block = Block {
+            header,
+            body: BlockBody { withdrawals: Some(Default::default()), ..Default::default() },
+        };
+        let block_hash = block.header.hash_slow();
+
+        let payload = ExecutionPayloadV3::from_block_unchecked(block_hash, &block);
+
+        // Sidecar carries v3 cancun fields plus v4 prague requests inline.
+        let mut requests = Requests::default();
+        requests.push_request(entry_0xf0.clone().into());
+        let sidecar = ExecutionPayloadSidecar::v4(
+            CancunPayloadFields { versioned_hashes: vec![], parent_beacon_block_root: B256::ZERO },
+            PraguePayloadFields { requests: requests.into() },
+        );
+        let exec_data = ExecutionData { payload: payload.into(), sidecar };
+
+        let ctx_verify = provider.context_for_payload(&exec_data);
+        let cd_verify = ctx_verify
+            .bridge_request
+            .as_deref()
+            .expect("verify path produces calldata when 0xf0 entry present");
+
+        // Build calldata directly with the same fee-recipient — what the proposer's
+        // `context_for_next_block` produces given matching attrs.
+        let cd_build = reth_0g_bridge::encode_execute_remote_messages_calldata(
+            &[msg],
+            local_chain_id,
+            PROPOSER_X,
+        );
+
+        assert_eq!(
+            cd_verify.as_ref(),
+            cd_build.as_ref(),
+            "verify-path calldata (sourcing fee_recipient from payload.beneficiary) must be \
+             byte-equal to build-path calldata (sourcing from attrs.suggested_fee_recipient); \
+             any drift would break dest-chain block-hash consistency"
+        );
+
+        let decoded = executeRemoteMessagesCall::abi_decode(cd_verify.as_ref()).expect("decode");
+        assert_eq!(decoded.msgs.len(), 1);
+        assert_eq!(decoded.msgs[0].feeRecipient, PROPOSER_X);
     }
 
     // Silence dead-code checks in this submodule for utilities used selectively.

@@ -39,6 +39,8 @@ reth-testing-utils.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
 secp256k1.workspace = true
 alloy-genesis.workspace = true
+alloy-sol-types.workspace = true
+ethereum_ssz.workspace = true
 
 [features]
 default = ["std"]

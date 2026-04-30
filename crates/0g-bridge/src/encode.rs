@@ -1,8 +1,13 @@
 //! ABI encoding of `Bridge.executeRemoteMessages(InboundMessage[])` calldata.
 //!
 //! Maps the wire [`BridgeMessage`] (8 SSZ fields) into the contract-facing
-//! [`InboundMessage`] (5 ABI fields), dropping `dstChainID` (implicit from execution context),
-//! `mode` (re-derived locally per-token), and `srcBlock` (audit-only).
+//! [`InboundMessage`] (6 ABI fields), dropping `dstChainID` (implicit from execution context),
+//! `mode` (re-derived locally per-token), and `srcBlock` (audit-only), and adding
+//! `feeRecipient` — the destination-chain block proposer's withdrawal address, threaded in
+//! by the EL from the engine API's `suggestedFeeRecipient` (build path) or from
+//! `payload.beneficiary` (verify path). Both source the same address: post-MinerReward fork
+//! the CL writes `withdrawals[0].Address` (proposer's withdrawal address) into
+//! `attrs.suggestedFeeRecipient`, and the EL pins it into the block header's coinbase.
 
 use crate::BridgeMessage;
 use alloc::vec::Vec;
@@ -19,6 +24,7 @@ sol! {
         address localToken;
         address recipient;
         uint256 amount;
+        address feeRecipient;
     }
 
     /// `Bridge.executeRemoteMessages(InboundMessage[])` — only callable from `SYSTEM_ADDRESS`.
@@ -31,12 +37,16 @@ pub type InboundMessage = InboundMessageAbi;
 
 /// Builds the full `Bridge.executeRemoteMessages([...])` ABI calldata payload.
 ///
-/// * Filters out any [`BridgeMessage`] whose `dst_chain_id` does not match `local_chain_id`.
-///   In practice CL always pre-filters; this is defence-in-depth so a misrouted message can't
-///   make the system call execute on the wrong chain.
-/// * Drops `dst_chain_id`, `mode`, `src_block` — these are CL-only audit fields and not part
-///   of the destination contract's `InboundMessage` ABI struct.
+/// * Filters out any [`BridgeMessage`] whose `dst_chain_id` does not match `local_chain_id`. In
+///   practice CL always pre-filters; this is defence-in-depth so a misrouted message can't make the
+///   system call execute on the wrong chain.
+/// * Drops `dst_chain_id`, `mode`, `src_block` — these are CL-only audit fields and not part of the
+///   destination contract's `InboundMessage` ABI struct.
 /// * Converts `amount` from big-endian `Bytes32` into `U256`.
+/// * Stamps every emitted `InboundMessage` with the same `fee_recipient` — the destination block's
+///   proposer-withdrawal address (build path: `attrs.suggested_fee_recipient`; verify path:
+///   `payload.beneficiary`). Both sources are byte-equal under post-MinerReward fork semantics, so
+///   build and verify produce identical calldata.
 /// * Preserves message ordering (CL has already sorted by `(SrcCID, DstCID, Nonce)`).
 ///
 /// Returns the 4-byte selector + ABI-encoded args, ready to be passed as the `calldata`
@@ -44,6 +54,7 @@ pub type InboundMessage = InboundMessageAbi;
 pub fn encode_execute_remote_messages_calldata(
     msgs: &[BridgeMessage],
     local_chain_id: u64,
+    fee_recipient: Address,
 ) -> Bytes {
     let abi_msgs: Vec<InboundMessageAbi> = msgs
         .iter()
@@ -54,6 +65,7 @@ pub fn encode_execute_remote_messages_calldata(
             localToken: Address::from(m.local_token.0),
             recipient: Address::from(m.recipient.0),
             amount: U256::from_be_bytes::<32>(m.amount.0),
+            feeRecipient: fee_recipient,
         })
         .collect();
 
@@ -80,9 +92,11 @@ mod tests {
         }
     }
 
+    const FEE_RECIPIENT: Address = Address::new([0xfe; 20]);
+
     #[test]
     fn empty_input_produces_empty_array_calldata() {
-        let cd = encode_execute_remote_messages_calldata(&[], 16700);
+        let cd = encode_execute_remote_messages_calldata(&[], 16700, FEE_RECIPIENT);
         // Should still be a valid call (selector + empty array).
         assert!(cd.len() >= 4, "must contain selector");
         let decoded = executeRemoteMessagesCall::abi_decode(&cd).expect("roundtrip empty");
@@ -96,7 +110,7 @@ mod tests {
             msg_for(1, 99999, 2), // foreign destination — should be filtered
             msg_for(1, 16700, 3),
         ];
-        let cd = encode_execute_remote_messages_calldata(&msgs, 16700);
+        let cd = encode_execute_remote_messages_calldata(&msgs, 16700, FEE_RECIPIENT);
         let decoded = executeRemoteMessagesCall::abi_decode(&cd).expect("roundtrip");
         assert_eq!(decoded.msgs.len(), 2);
         assert_eq!(decoded.msgs[0].nonce, 1);
@@ -111,13 +125,11 @@ mod tests {
             nonce: 42,
             local_token: FixedBytes([0x11; 20]),
             recipient: FixedBytes([0x22; 20]),
-            amount: FixedBytes(
-                U256::from(1_000_000_000_000_000_000u128).to_be_bytes::<32>(),
-            ),
+            amount: FixedBytes(U256::from(1_000_000_000_000_000_000u128).to_be_bytes::<32>()),
             mode: 1,
             src_block: 7,
         };
-        let cd = encode_execute_remote_messages_calldata(&[m.clone()], 16702);
+        let cd = encode_execute_remote_messages_calldata(&[m.clone()], 16702, FEE_RECIPIENT);
         let decoded = executeRemoteMessagesCall::abi_decode(&cd).expect("roundtrip");
         assert_eq!(decoded.msgs.len(), 1);
         let am = &decoded.msgs[0];
@@ -126,12 +138,13 @@ mod tests {
         assert_eq!(am.localToken, Address::from([0x11; 20]));
         assert_eq!(am.recipient, Address::from([0x22; 20]));
         assert_eq!(am.amount, U256::from(1_000_000_000_000_000_000u128));
+        assert_eq!(am.feeRecipient, FEE_RECIPIENT);
     }
 
     #[test]
     fn calldata_starts_with_execute_remote_messages_selector() {
         let m = msg_for(1, 16700, 1);
-        let cd = encode_execute_remote_messages_calldata(&[m], 16700);
+        let cd = encode_execute_remote_messages_calldata(&[m], 16700, FEE_RECIPIENT);
         let expected_selector = executeRemoteMessagesCall::SELECTOR;
         assert_eq!(&cd[..4], &expected_selector);
     }
@@ -139,12 +152,28 @@ mod tests {
     #[test]
     fn abi_field_order_matches_solidity() {
         // (uint64 srcChainID, uint64 nonce, address localToken, address recipient, uint256
-        // amount) — verified by encoding then checking the typed decode succeeds. Field
-        // misordering would surface as a decode error or wrong values.
+        // amount, address feeRecipient) — verified by encoding then checking the typed decode
+        // succeeds. Field misordering would surface as a decode error or wrong values.
         let m = msg_for(123, 16700, 9);
-        let cd = encode_execute_remote_messages_calldata(&[m], 16700);
+        let cd = encode_execute_remote_messages_calldata(&[m], 16700, FEE_RECIPIENT);
         let decoded = executeRemoteMessagesCall::abi_decode(&cd).unwrap();
         assert_eq!(decoded.msgs[0].srcChainID, 123);
         assert_eq!(decoded.msgs[0].nonce, 9);
+        assert_eq!(decoded.msgs[0].feeRecipient, FEE_RECIPIENT);
+    }
+
+    #[test]
+    fn fee_recipient_is_stamped_on_every_message() {
+        // All `InboundMessage` entries in a batch carry the same per-block proposer fee
+        // recipient (one address per dest block, applied to every message executed in that
+        // block).
+        let msgs = vec![msg_for(1, 16700, 1), msg_for(2, 16700, 7), msg_for(3, 16700, 9)];
+        let addr = Address::new([0xab; 20]);
+        let cd = encode_execute_remote_messages_calldata(&msgs, 16700, addr);
+        let decoded = executeRemoteMessagesCall::abi_decode(&cd).expect("roundtrip");
+        assert_eq!(decoded.msgs.len(), 3);
+        for m in decoded.msgs.iter() {
+            assert_eq!(m.feeRecipient, addr);
+        }
     }
 }

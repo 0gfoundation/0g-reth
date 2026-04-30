@@ -22,11 +22,10 @@
 extern crate alloc;
 
 mod decode;
-mod encode;
+pub mod encode;
 
 pub use decode::{
-    decode_bridge_messages, decode_bridge_request, BridgeDecodeError, BridgeMessage,
-    BridgeRequests,
+    decode_bridge_messages, decode_bridge_request, BridgeDecodeError, BridgeMessage, BridgeRequests,
 };
 pub use encode::{encode_execute_remote_messages_calldata, InboundMessage};
 
