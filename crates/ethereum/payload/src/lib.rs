@@ -28,6 +28,7 @@ use reth_evm_ethereum::EthEvmConfig;
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload, EthPayloadBuilderAttributes};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::PayloadBuilderAttributes;
+use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
@@ -317,6 +318,32 @@ where
         // Query sender balance from the state provider
         if let Ok(Some(sender_account)) = state_provider.basic_account(&sender) {
             let sender_balance = sender_account.balance;
+
+            // FIX (Option A): skip strictly-stale-nonce tx. Pool iterator's snapshot
+            // can be stale relative to chain state (maintain task lag), and 0g's
+            // "delay execution" optimization skips EVM check. Without this guard a
+            // stale tx would be included in the proposed block and rejected during
+            // NewPayload validation as "nonce too low", producing an invalid block.
+            if pool_tx.nonce() < sender_account.nonce {
+                warn!(
+                    target: "payload_builder",
+                    ?sender,
+                    pool_tx_nonce = pool_tx.nonce(),
+                    state_nonce = sender_account.nonce,
+                    tx_hash = ?tx.hash(),
+                    "STALE_TX_IN_BUILD skipping stale-nonce tx (would cause invalid block)"
+                );
+                best_txs.mark_invalid(
+                    &pool_tx,
+                    InvalidPoolTransactionError::Consensus(
+                        InvalidTransactionError::NonceNotConsistent {
+                            tx: pool_tx.nonce(),
+                            state: sender_account.nonce,
+                        },
+                    ),
+                );
+                continue;
+            }
 
             if sender_balance < new_cumulative_cost {
                 trace!(
