@@ -189,6 +189,13 @@ where
     // when multiple transactions from the same sender are included in the block
     let mut sender_cumulative_gas_cost: HashMap<Address, U256> = HashMap::new();
 
+    // Track the next nonce expected per sender within this build job. Initialized
+    // lazily from chain state on first encounter, then incremented after each
+    // accepted tx. Used to bidirectionally guard against stale (already-mined)
+    // and gap (out-of-order independent insertion) tx that the pool iterator
+    // can yield under multi-source burst load.
+    let mut sender_next_nonce: HashMap<Address, u64> = HashMap::new();
+
     builder.apply_pre_execution_changes().map_err(|err| {
         warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
         PayloadBuilderError::Internal(err.into())
@@ -319,26 +326,56 @@ where
         if let Ok(Some(sender_account)) = state_provider.basic_account(&sender) {
             let sender_balance = sender_account.balance;
 
-            // FIX (Option A): skip strictly-stale-nonce tx. Pool iterator's snapshot
-            // can be stale relative to chain state (maintain task lag), and 0g's
-            // "delay execution" optimization skips EVM check. Without this guard a
-            // stale tx would be included in the proposed block and rejected during
-            // NewPayload validation as "nonce too low", producing an invalid block.
-            if pool_tx.nonce() < sender_account.nonce {
+            // Bidirectional nonce guard. The pool iterator's `independent` set can
+            // be wrong in two directions when 0g's "delay execution" optimization
+            // skips EVM enforcement:
+            //   * stale (pool_tx.nonce < expected): pool snapshot lagged behind a
+            //     canonical commit; the tx was already mined.
+            //   * gap   (pool_tx.nonce > expected): out-of-order arrival on
+            //     `new_transaction_receiver` placed a non-ancestor tx into
+            //     `independent` directly (ancestor check in `add_new_transactions`
+            //     is best-effort against the iterator's local `all` map only).
+            // Either case would produce an invalid block at NewPayload validation.
+            //
+            // `expected` is initialized lazily from chain state at the parent
+            // header (state_provider is pinned to parent_header.hash()), then
+            // incremented per accepted tx so that subsequent txs from the same
+            // sender are evaluated relative to the in-build state, not the
+            // static chain state.
+            let expected_nonce =
+                *sender_next_nonce.entry(sender).or_insert(sender_account.nonce);
+
+            if pool_tx.nonce() < expected_nonce {
+                // Stale: drop just this tx; iterator's unlock chain will
+                // surface this sender's later (potentially valid) txs.
                 warn!(
                     target: "payload_builder",
                     ?sender,
                     pool_tx_nonce = pool_tx.nonce(),
-                    state_nonce = sender_account.nonce,
+                    expected = expected_nonce,
                     tx_hash = ?tx.hash(),
-                    "STALE_TX_IN_BUILD skipping stale-nonce tx (would cause invalid block)"
+                    "STALE_TX_IN_BUILD skipping stale (already-mined) tx"
+                );
+                continue;
+            }
+            if pool_tx.nonce() > expected_nonce {
+                // Gap: this sender cannot be filled from this build's iterator
+                // state. Mark sender invalid so subsequent txs from it are
+                // skipped for the remainder of this build.
+                warn!(
+                    target: "payload_builder",
+                    ?sender,
+                    pool_tx_nonce = pool_tx.nonce(),
+                    expected = expected_nonce,
+                    tx_hash = ?tx.hash(),
+                    "GAP_TX_IN_BUILD skipping gap-nonce tx; sender invalidated for this build"
                 );
                 best_txs.mark_invalid(
                     &pool_tx,
                     InvalidPoolTransactionError::Consensus(
                         InvalidTransactionError::NonceNotConsistent {
                             tx: pool_tx.nonce(),
-                            state: sender_account.nonce,
+                            state: expected_nonce,
                         },
                     ),
                 );
@@ -373,6 +410,10 @@ where
 
         // Update sender's cumulative gas cost
         sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
+
+        // Advance the in-build expected nonce so that subsequent txs from this
+        // sender in this build are checked against the post-tx position.
+        sender_next_nonce.insert(sender, pool_tx.nonce() + 1);
 
         // add to the total blob gas used if the transaction successfully executed
         if let Some(blob_tx) = tx.as_eip4844() {
