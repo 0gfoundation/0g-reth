@@ -36,7 +36,7 @@ pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_TESTNET: u64 = 1_777_852_800;
 pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_MAINNET: u64 = 1_778_716_800;
 
 /// Block gas limit floor after the minimum-gas-limit hardfork (replaces [`MINIMUM_GAS_LIMIT`]).
-pub const MINIMUM_GAS_LIMIT_POST_FORK: u64 = 3_000_000;
+pub const MINIMUM_GAS_LIMIT_POST_FORK: u64 = 20_000_000;
 
 /// Activation timestamp for the minimum gas limit hardfork for the given `chain_id`.
 #[inline]
