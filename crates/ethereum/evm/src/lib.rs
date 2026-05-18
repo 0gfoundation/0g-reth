@@ -278,11 +278,13 @@ where
             // than re-running the system call.
             bridge_request: None,
             // Replay can't recover the raw SSZ blob (it's not in body, not in receipts, not
-            // in any system contract storage — the 0xf0 entry is CL-pushed only). Skipping the
-            // 0xf0 push in `EthBlockExecutor::finish` is byte-equivalent to the pre-fix replay
-            // path — the 0G `validate_block_post_execution` is lenient (overwrites header
-            // rather than diffs), so the in-memory header reconstruction differs from the
-            // sealed db value harmlessly. See plan §6.2 of the fix correctness analysis.
+            // in any system contract storage — the 0xf0 entry is CL-pushed only). On replay
+            // `EthBlockExecutor::finish` therefore skips the 0xf0 push, and the 0G
+            // `validate_block_post_execution` tolerates this: it overwrites `requests_hash`
+            // on the in-memory header rather than diffing against the sealed value. The db
+            // copy retains the original `requests_hash` (which covered 0xf0 when the block
+            // was first built/verified); the in-memory recomputation here is discarded after
+            // replay completes.
             bridge_request_raw: None,
         }
     }
@@ -343,7 +345,9 @@ where
         // 0G: Forward the original SSZ blob unchanged so `EthBlockExecutor::finish` can append
         // it as the `0xf0` entry of the EIP-7685 requests list. This is what makes the proposer-
         // built sealed `block.header.requests_hash` cover the bridge entry — a precondition for
-        // the CL's re-assembled block hash to match `payload.block_hash`. See plan §1.6.4.
+        // the CL's re-assembled block hash to match `payload.block_hash`. The bytes pass through
+        // verbatim (no decode → re-encode) so proposer and verifier emit byte-equal
+        // `executionRequests` lists.
         let bridge_request_raw = attributes.bridge_request.clone().map(Cow::Owned);
         tracing::debug!(
             target: "0g::evm::bridge",
@@ -482,7 +486,8 @@ where
 
         // 0G: Carry the same raw SSZ bytes the CL emitted in the 0xf0 entry. On the verifier
         // path `EthBlockExecutor::finish` re-pushes them so its returned `requests` matches
-        // the proposer-built sealed header's `requests_hash`. See plan §1.6.4.
+        // the proposer-built sealed header's `requests_hash`. Bytes go through verbatim to
+        // preserve byte-equality between proposer and verifier `executionRequests` lists.
         let bridge_request_raw: Option<Cow<'a, Bytes>> =
             bridge_entry.map(|raw| Cow::Owned(Bytes::copy_from_slice(raw)));
 

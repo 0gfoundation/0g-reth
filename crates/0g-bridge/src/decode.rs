@@ -68,13 +68,12 @@ impl BridgeMessage {
 /// SSZ Container holding a variable-length `List[BridgeMessage, MaxBridgeMessagesPerBlock]`.
 ///
 /// **Wire format must match the matching SSZ container on the CL side**: the field is
-/// variable-length, so SSZ requires a 4-byte offset prefix even for an empty list. Earlier
-/// versions of this struct used `#[ssz(struct_behaviour = "transparent")]` — that flattens
-/// to a bare `Vec` (zero offset prefix) which mismatches CL's container encoding by exactly
-/// 4 bytes on every payload (empty list 4 vs 0; one msg 109 vs 105). Result: every decode
-/// fails with `InvalidByteLength` and the bridge system call is silently skipped on every
-/// block. The cap is still enforced post-decode by [`decode_bridge_messages`] rather than by
-/// the SSZ derive (which has no `max_len` attr in `ethereum_ssz_derive`).
+/// variable-length, so SSZ requires a 4-byte offset prefix even for an empty list (empty
+/// list = 4 bytes, one message = 4 + 105 = 109 bytes). The derive must produce Container
+/// layout — do NOT add `#[ssz(struct_behaviour = "transparent")]`, which would flatten to a
+/// bare `Vec` and drop the 4-byte offset, breaking byte-equality with CL. The per-block cap
+/// is enforced post-decode by [`decode_bridge_messages`] rather than by the SSZ derive
+/// (`ethereum_ssz_derive` has no `max_len` attribute).
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode)]
 pub struct BridgeRequests {
     /// Decoded messages. Length must be `<= MAX_BRIDGE_MESSAGES_PER_BLOCK`; enforced at
@@ -190,8 +189,6 @@ mod tests {
     /// Wire compatibility with CL's `karalabe/ssz`-encoded `BridgeRequests` container.
     /// Empty messages must encode to **exactly 4 bytes** — the SSZ container offset prefix
     /// (`u32 LE = 4`, pointing past the offset itself to where the empty list content starts).
-    /// Earlier `#[ssz(struct_behaviour = "transparent")]` produced 0 bytes here, mismatching CL
-    /// by 4 bytes on every payload.
     #[test]
     fn empty_list_wire_format_matches_cl_container() {
         let body = BridgeRequests { messages: vec![] }.as_ssz_bytes();
@@ -199,7 +196,7 @@ mod tests {
             body.len(),
             4,
             "empty BridgeRequests must serialize to 4 bytes (the variable-list offset); got \
-             {} bytes — likely a regression to a `transparent`/bare-Vec layout.",
+             {} bytes — wire format must match CL Container layout.",
             body.len()
         );
         // Offset value = 4 (points just past the offset itself, since the list is empty).
@@ -222,8 +219,11 @@ mod tests {
     #[test]
     fn rejects_wrong_type_byte() {
         let body = BridgeRequests { messages: vec![sample_msg(1)] }.as_ssz_bytes();
-        // `0x05` was the original (pre-§1.6.5) bridge type byte; assert the new `0xf0` decoder
-        // rejects it cleanly so a stale CL wouldn't be silently accepted by an upgraded EL.
+        // Bridge uses request type byte `0xf0` (private 0G namespace `0xf0..=0xfe`) rather
+        // than `0x05` because Ethereum upstream may claim low type bytes like `0x03..=0x05`
+        // for new EIP-7685 standard request types in a future fork — squatting on `0x05`
+        // would risk a future collision. Assert the new decoder rejects `0x05` cleanly so a
+        // stale CL (or a crafted payload using the old byte) wouldn't be silently accepted.
         let mut wire = vec![0x05];
         wire.extend_from_slice(&body);
         let err = decode_bridge_request(&wire).unwrap_err();

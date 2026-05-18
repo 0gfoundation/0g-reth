@@ -950,7 +950,9 @@ mod bridge_tests {
             bridge_request: bridge_calldata.map(Cow::Owned),
             // This test exercises only the bridge system call's storage side-effects, not the
             // returned `requests` list. `None` here keeps the test focused; the 0xf0 push path
-            // is exercised end-to-end by §2.F integration tests.
+            // is exercised by `finish_appends_0xf0_entry_when_raw_attached` and
+            // `finish_appends_0xf0_after_pectra_types` below (same module), which assert the
+            // `requests` list returned by `finish()` ends with `0xf0 || raw_bytes`.
             bridge_request_raw: None,
         };
 
@@ -1083,10 +1085,11 @@ mod bridge_tests {
     #[test]
     fn finish_appends_0xf0_entry_when_raw_attached() {
         // Prague active + bridge_request_raw=Some(bytes) → returned `requests` must end with
-        // `0xf0 || bytes`. This is the build-path invariant: `EthBlockAssembler` consumes this
-        // `requests` to compute `requests_hash` for the sealed block header — if the entry is
-        // missing here, the proposer-built `block.block_hash` will not match the wire requests
-        // list and the CL rejects the block (the bug §2.F caught).
+        // `0xf0 || bytes`. This is the build-path invariant: `EthBlockAssembler` consumes the
+        // `requests` returned by `finish()` to compute `requests_hash` for the sealed block
+        // header. The 0xf0 entry must be present in that list so the proposer-built
+        // `block.block_hash` covers it and matches what the CL reconstructs from the same
+        // wire bytes.
         let spec = build_chain_spec(true);
         let raw = Bytes::from_static(&[0x04, 0x00, 0x00, 0x00]); // SSZ empty-list sentinel (4 bytes)
         let requests = finish_requests_with_raw(spec, None, Some(raw.clone()));
