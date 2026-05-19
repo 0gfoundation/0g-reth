@@ -56,18 +56,33 @@ pub fn encode_execute_remote_messages_calldata(
     local_chain_id: u64,
     fee_recipient: Address,
 ) -> Bytes {
-    let abi_msgs: Vec<InboundMessageAbi> = msgs
-        .iter()
-        .filter(|m| m.dst_chain_id == local_chain_id)
-        .map(|m| InboundMessageAbi {
+    let mut abi_msgs: Vec<InboundMessageAbi> = Vec::with_capacity(msgs.len());
+    for m in msgs {
+        if m.dst_chain_id != local_chain_id {
+            // CL builder is expected to pre-filter by `dst_chain_id`, so this branch should be
+            // unreachable in production. Surface mismatches loudly rather than silently dropping
+            // — a misrouted message that lands here is either a CL bug or a network-config
+            // inconsistency and operators need to see it.
+            tracing::warn!(
+                target: "0g::evm::bridge",
+                got_dst_chain_id = m.dst_chain_id,
+                local_chain_id,
+                src_chain_id = m.src_chain_id,
+                nonce = m.nonce,
+                "dropping bridge message: dst_chain_id mismatch (CL filtering layer should have \
+                 caught this — likely a CL bug or stale foreign-chain config)"
+            );
+            continue;
+        }
+        abi_msgs.push(InboundMessageAbi {
             srcChainID: m.src_chain_id,
             nonce: m.nonce,
             localToken: Address::from(m.local_token.0),
             recipient: Address::from(m.recipient.0),
             amount: U256::from_be_bytes::<32>(m.amount.0),
             feeRecipient: fee_recipient,
-        })
-        .collect();
+        });
+    }
 
     let call = executeRemoteMessagesCall { msgs: abi_msgs };
     Bytes::from(call.abi_encode())

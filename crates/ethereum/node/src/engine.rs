@@ -239,4 +239,23 @@ mod tests {
         let err = validate(spec, EngineApiMessageVersion::V3, &attrs).unwrap_err();
         assert!(matches!(err, EngineObjectValidationError::InvalidParams(_)), "got {err:?}");
     }
+
+    /// V3 + bridge fork active + `bridge_requests = Some(...)` is a malformed combination — the
+    /// CL is both using the wrong method version (should be V4) AND attaching a V4-only field.
+    /// Two errors apply here; the validator returns the `FieldOnlyValidOnV4` `InvalidParams`
+    /// first (it's checked before the V3+active `UnsupportedFork` branch). Either error is a
+    /// reject and the CL would correct course on retry, but lock the actual returned variant
+    /// here so future reorderings of the validator branches are explicit.
+    #[test]
+    fn v3_with_bridge_active_and_bridge_requests_returns_invalid_params() {
+        let spec = spec_with_bridge(1); // bridge active at t=1
+        let attrs = well_formed_attrs(100, Some(Bytes::from_static(&[0, 0, 0, 0])));
+        let err = validate(spec, EngineApiMessageVersion::V3, &attrs).unwrap_err();
+        assert!(
+            matches!(err, EngineObjectValidationError::InvalidParams(_)),
+            "V3 + bridge_active + bridge_requests=Some should reject as InvalidParams \
+             (FieldOnlyValidOnV4 takes precedence over UnsupportedFork in the current branch \
+              order); got {err:?}"
+        );
+    }
 }

@@ -7320,6 +7320,7 @@ dependencies = [
  "ethereum_ssz",
  "ethereum_ssz_derive",
  "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]

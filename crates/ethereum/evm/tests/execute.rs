@@ -1297,6 +1297,87 @@ mod bridge_tests {
         assert_eq!(decoded.msgs[0].feeRecipient, PROPOSER_X);
     }
 
+    /// Replay path (`context_for_block`) must zero out both bridge ctx fields. The historical
+    /// block's 0xf0 raw SSZ has no on-chain source (not in body, not in receipts, not in any
+    /// system contract storage), so the replay-path `finish()` skips both the bridge system call
+    /// and the 0xf0 push. The lenient 0G `validate_block_post_execution` then overwrites
+    /// `requests_hash` on the in-memory header rather than diffing against the sealed value, so
+    /// replay tolerates the missing entry. Locking this wiring invariant here prevents a future
+    /// refactor from accidentally repopulating either field from receipts / system storage and
+    /// breaking the byte-equivalence with the original execution.
+    #[test]
+    fn context_for_block_clears_bridge_fields() {
+        use reth_ethereum_primitives::{Block, BlockBody};
+        use reth_evm::ConfigureEvm;
+        use reth_primitives_traits::SealedBlock;
+
+        let spec = build_chain_spec(true);
+        let provider = EthEvmConfig::new(spec);
+
+        let header = Header {
+            timestamp: 100,
+            number: 1,
+            excess_blob_gas: Some(0),
+            blob_gas_used: Some(0),
+            parent_beacon_block_root: Some(B256::ZERO),
+            withdrawals_root: Some(B256::ZERO),
+            ..Header::default()
+        };
+        let block = Block {
+            header,
+            body: BlockBody { withdrawals: Some(Default::default()), ..Default::default() },
+        };
+        let sealed = SealedBlock::seal_slow(block);
+
+        let ctx = provider.context_for_block(&sealed);
+        assert!(
+            ctx.bridge_request.is_none(),
+            "replay path must NOT populate bridge_request (no calldata to recover)",
+        );
+        assert!(
+            ctx.bridge_request_raw.is_none(),
+            "replay path must NOT populate bridge_request_raw (no SSZ source to recover)",
+        );
+    }
+
+    /// Defense-in-depth: with Bridge fork inactive at the block timestamp, the 0xf0 push gate
+    /// in `EthBlockExecutor::finish` must NOT emit a 0xf0 entry even if `bridge_request_raw` is
+    /// somehow attached. Production path is locked at the engine validator layer (V4 requires
+    /// `bridge_active`, V3 forbids `bridge_requests`), but test fixtures and any future hot
+    /// path can bypass that layer — we still need `finish()` to refuse the push so a
+    /// pre-Bridge block can never seal a `requests_hash` covering a 0xf0 entry that the bridge
+    /// system call didn't actually execute (would silently diverge bridge state from the
+    /// network).
+    #[test]
+    fn finish_omits_0xf0_entry_when_bridge_inactive_but_prague_active() {
+        let spec = build_chain_spec(false); // Prague active (from MAINNET base), Bridge inactive
+        let raw = Bytes::from_static(&[0x04, 0x00, 0x00, 0x00, 0xDE, 0xAD]);
+        let requests = finish_requests_with_raw(spec, None, Some(raw));
+        let entries: Vec<&[u8]> = requests.iter().map(|b| b.as_ref()).collect();
+        assert!(
+            entries.iter().all(|e| e.first() != Some(&0xf0)),
+            "bridge_request_raw=Some + bridge_inactive must NOT push 0xf0 entry; got {:?}",
+            entries
+        );
+    }
+
+    /// Both crates declare `BRIDGE_REQUEST_TYPE = 0xf0` independently (alloy-evm can't depend on
+    /// reth-0g-bridge — the dependency goes the other way). If anyone updates the constant in
+    /// one crate without the other, wire format silently diverges (CL ↔ EL block-hash mismatch
+    /// repeat of 2026-04-29 Bug #2). Lock the two constants together at test time.
+    ///
+    /// Note: this does NOT catch CL Go-side drift; that side is documented as a frozen schema
+    /// constant in `docs/plans/bridge-schemas.md::共享常量` and is a docs-layer guarantee.
+    #[test]
+    fn bridge_request_type_matches_alloy_evm_constant() {
+        assert_eq!(
+            reth_0g_bridge::BRIDGE_REQUEST_TYPE,
+            alloy_evm::block::system_calls::bridge::BRIDGE_REQUEST_TYPE,
+            "BRIDGE_REQUEST_TYPE must match between reth-0g-bridge (wire decoder) and alloy-evm \
+             (block executor 0xf0 push)",
+        );
+    }
+
     // Silence dead-code checks in this submodule for utilities used selectively.
     #[allow(dead_code)]
     fn _unused() -> HashMap<Address, AccountInfo> {

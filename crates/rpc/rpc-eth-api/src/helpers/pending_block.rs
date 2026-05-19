@@ -430,3 +430,27 @@ impl<H: BlockHeader> BuildPendingEnv<H> for NextBlockEnvAttributes {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::Header;
+
+    /// `BuildPendingEnv` is used by `eth_call` / `eth_estimateGas` / pending-block construction.
+    /// It must NOT populate `bridge_request`: pending blocks are local-mempool simulations and
+    /// must not fire the bridge system call (which would alter state from an unsealed CL input
+    /// the simulator has no business deciding on). Locking this wiring invariant catches a
+    /// future refactor that accidentally inherits a bridge blob from somewhere (parent header,
+    /// a thread-local, etc.).
+    #[test]
+    fn build_pending_env_sets_no_bridge_request() {
+        let header = Header::default();
+        let parent = SealedHeader::seal_slow(header);
+        let attrs =
+            <NextBlockEnvAttributes as BuildPendingEnv<Header>>::build_pending_env(&parent);
+        assert!(
+            attrs.bridge_request.is_none(),
+            "pending-block / eth_call path must NOT carry bridge_request"
+        );
+    }
+}

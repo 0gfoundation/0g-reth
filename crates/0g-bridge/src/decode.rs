@@ -203,16 +203,63 @@ mod tests {
         assert_eq!(body, [0x04, 0x00, 0x00, 0x00], "offset must be `4` u32 LE");
     }
 
-    /// Single-message wire compatibility: 4-byte offset + 105 bytes of `BridgeMessage` content.
+    /// Single-message wire compatibility: byte-level fixture against the canonical
+    /// `BridgeMessage` SSZ layout. A length-only assertion would silently accept any
+    /// field-order swap (e.g. swapping two `u64` fields or flipping `amount` endianness)
+    /// because the total still rounds to 109 bytes — exactly the regression class that
+    /// produced [Bug #2 in 2026-04-29 Session 5](docs/integration-tests/findings.md): a
+    /// schema-shape mismatch between Rust and Go that passed all reth-side roundtrip tests
+    /// but failed at the cross-language wire boundary. Hardcoding the expected bytes here
+    /// locks the field order, byte width, and endianness; any single-byte change to the
+    /// `BridgeMessage` SSZ derive immediately breaks this test. The CL side is expected to
+    /// mirror this fixture against the same byte literal (tracked separately as a cross-PR
+    /// follow-up).
+    ///
+    /// Fixture decomposition (matches `sample_msg(7)`):
+    /// - `[0x04 0x00 0x00 0x00]` — SSZ container offset prefix (u32 LE = 4, points past
+    ///   itself to start of the messages list content).
+    /// - `[0x3C 0x41 0x00 0x00 0x00 0x00 0x00 0x00]` — `src_chain_id = 16700` (LE u64).
+    /// - `[0x3E 0x41 0x00 0x00 0x00 0x00 0x00 0x00]` — `dst_chain_id = 16702` (LE u64).
+    /// - `[0x07 0x00 0x00 0x00 0x00 0x00 0x00 0x00]` — `nonce = 7` (LE u64).
+    /// - `[0x01; 20]` — `local_token` raw bytes.
+    /// - `[0x02; 20]` — `recipient` raw bytes.
+    /// - `[0x00..., 0x0D 0xE0 0xB6 0xB3 0xA7 0x64 0x00 0x00]` — `amount = 1e18` (BE u256).
+    /// - `[0x01]` — `mode = MintBurn`.
+    /// - `[0x2A 0x00 0x00 0x00 0x00 0x00 0x00 0x00]` — `src_block = 42` (LE u64).
     #[test]
-    fn single_message_wire_format_is_offset_plus_105() {
-        let body =
-            BridgeRequests { messages: vec![sample_msg(7)] }.as_ssz_bytes();
+    fn single_message_wire_format_byte_equal_to_cl_container() {
+        let body = BridgeRequests { messages: vec![sample_msg(7)] }.as_ssz_bytes();
+
+        let mut expected = Vec::with_capacity(109);
+        // SSZ container offset prefix (u32 LE = 4).
+        expected.extend_from_slice(&[0x04, 0x00, 0x00, 0x00]);
+        // src_chain_id = 16700 LE.
+        expected.extend_from_slice(&16700u64.to_le_bytes());
+        // dst_chain_id = 16702 LE.
+        expected.extend_from_slice(&16702u64.to_le_bytes());
+        // nonce = 7 LE.
+        expected.extend_from_slice(&7u64.to_le_bytes());
+        // local_token = [0x01; 20] raw.
+        expected.extend_from_slice(&[0x01; 20]);
+        // recipient = [0x02; 20] raw.
+        expected.extend_from_slice(&[0x02; 20]);
+        // amount = 1e18 BE u256.
+        expected.extend_from_slice(
+            &U256::from(1_000_000_000_000_000_000u128).to_be_bytes::<32>(),
+        );
+        // mode = 1 (MintBurn).
+        expected.push(0x01);
+        // src_block = 42 LE.
+        expected.extend_from_slice(&42u64.to_le_bytes());
+
+        assert_eq!(expected.len(), 109, "fixture builder mismatch");
         assert_eq!(
-            body.len(),
-            4 + 105,
-            "one-message BridgeRequests must be 4-byte offset + 105 bytes; got {} bytes",
-            body.len()
+            body, expected,
+            "BridgeRequests SSZ wire format must match the canonical 4-byte-offset + 105-byte \
+             container layout byte-for-byte; any drift (field reorder, endianness flip, or \
+             derive-attribute change) indicates a schema regression that would break cross-language \
+             wire compatibility with CL — see 2026-04-29 Session 5 Bug #2 in integration-tests \
+             findings.md."
         );
     }
 
