@@ -1366,8 +1366,10 @@ mod bridge_tests {
     /// one crate without the other, wire format silently diverges (CL ↔ EL block-hash mismatch
     /// repeat of 2026-04-29 Bug #2). Lock the two constants together at test time.
     ///
-    /// Note: this does NOT catch CL Go-side drift; that side is documented as a frozen schema
-    /// constant in `docs/plans/bridge-schemas.md::共享常量` and is a docs-layer guarantee.
+    /// Note: this does NOT catch CL Go-side drift. The Go-side `BridgeRequestType` constant
+    /// in `0g-chain-ng/primitives/constants` is frozen by cross-stream convention; ensuring it
+    /// matches `BRIDGE_REQUEST_TYPE` is a release-engineering / review-time guarantee, not a
+    /// compile-time one (the Go and Rust toolchains can't share constants directly).
     #[test]
     fn bridge_request_type_matches_alloy_evm_constant() {
         assert_eq!(
