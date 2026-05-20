@@ -272,7 +272,10 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware> NodeAddOns<N>
 where
     N: FullNodeComponents<
         Types: NodeTypes<
-            ChainSpec: Hardforks + EthereumHardforks,
+            // `EthExecutorSpec` needed so `EthereumEngineValidator::ensure_well_formed_payload`
+            // can call `is_bridge_active_at_timestamp` for the 0xf0 entry presence + decode
+            // check on bridge-active payloads.
+            ChainSpec: Hardforks + EthereumHardforks + EthExecutorSpec,
             Primitives = EthPrimitives,
             Payload: EngineTypes<ExecutionData = ExecutionData>,
         >,
@@ -324,8 +327,11 @@ where
 impl<N, EthB, PVB, EB, EVB> RethRpcAddOns<N> for EthereumAddOns<N, EthB, PVB, EB, EVB>
 where
     N: FullNodeComponents<
+        // `EthExecutorSpec` propagates from `PayloadValidator` impl on
+        // `EthereumEngineValidator` (needs `is_bridge_active_at_timestamp` for the 0xf0
+        // entry validation check).
         Types: NodeTypes<
-            ChainSpec: Hardforks + EthereumHardforks,
+            ChainSpec: Hardforks + EthereumHardforks + EthExecutorSpec,
             Primitives = EthPrimitives,
             Payload: EngineTypes<ExecutionData = ExecutionData>,
         >,
@@ -563,7 +569,10 @@ pub struct EthereumEngineValidatorBuilder;
 impl<Node, Types> PayloadValidatorBuilder<Node> for EthereumEngineValidatorBuilder
 where
     Types: NodeTypes<
-        ChainSpec: Hardforks + EthereumHardforks + Clone + 'static,
+        // `EthExecutorSpec` bound carries the 0G `is_bridge_active_at_timestamp` method used
+        // by `EthereumEngineValidator::ensure_well_formed_payload` to gate the 0xf0-entry
+        // presence + decode check on bridge-active payloads.
+        ChainSpec: Hardforks + EthereumHardforks + EthExecutorSpec + Clone + 'static,
         Payload: EngineTypes<ExecutionData = ExecutionData>
                      + PayloadTypes<PayloadAttributes = EthPayloadAttributes>,
         Primitives = EthPrimitives,

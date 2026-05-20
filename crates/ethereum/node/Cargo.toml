@@ -37,6 +37,7 @@ reth-rpc-eth-types.workspace = true
 reth-engine-local.workspace = true
 reth-engine-primitives.workspace = true
 reth-payload-primitives.workspace = true
+reth-0g-bridge.workspace = true
 
 # ethereum
 alloy-eips.workspace = true
