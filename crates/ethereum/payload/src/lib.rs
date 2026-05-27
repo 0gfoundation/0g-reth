@@ -28,6 +28,7 @@ use reth_evm_ethereum::EthEvmConfig;
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload, EthPayloadBuilderAttributes};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::PayloadBuilderAttributes;
+use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
@@ -188,6 +189,13 @@ where
     // when multiple transactions from the same sender are included in the block
     let mut sender_cumulative_gas_cost: HashMap<Address, U256> = HashMap::new();
 
+    // Track the next nonce expected per sender within this build job. Initialized
+    // lazily from chain state on first encounter, then incremented after each
+    // accepted tx. Bidirectionally guards against stale (already-mined) and gap
+    // (out-of-order independent insertion) tx that the pool iterator can yield
+    // under multi-source burst load. See fix/payload-skip-stale-nonce-tx.
+    let mut sender_next_nonce: HashMap<Address, u64> = HashMap::new();
+
     builder.apply_pre_execution_changes().map_err(|err| {
         warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
         PayloadBuilderError::Internal(err.into())
@@ -220,6 +228,7 @@ where
     enum PackOutcome {
         Included { saturated_blobs: bool },
         Invalid(InvalidPoolTransactionError),
+        Skip,
         Cancelled,
     }
 
@@ -325,6 +334,42 @@ where
             if let Ok(Some(sender_account)) = state_provider.basic_account(&sender) {
                 let sender_balance = sender_account.balance;
 
+                // Bidirectional nonce guard. The pool iterator's independent set
+                // can be wrong in two directions when 0g's delay-execution path
+                // skips EVM enforcement:
+                //   * stale (pool_tx.nonce < expected): pool snapshot lagged
+                //   * gap   (pool_tx.nonce > expected): out-of-order arrival
+                // Either case would produce an invalid block at NewPayload.
+                let expected_nonce =
+                    *sender_next_nonce.entry(sender).or_insert(sender_account.nonce);
+                if pool_tx.nonce() < expected_nonce {
+                    warn!(
+                        target: "payload_builder",
+                        ?sender,
+                        pool_tx_nonce = pool_tx.nonce(),
+                        expected = expected_nonce,
+                        tx_hash = ?tx.hash(),
+                        "STALE_TX_IN_BUILD skipping stale (already-mined) tx"
+                    );
+                    return Ok(PackOutcome::Skip);
+                }
+                if pool_tx.nonce() > expected_nonce {
+                    warn!(
+                        target: "payload_builder",
+                        ?sender,
+                        pool_tx_nonce = pool_tx.nonce(),
+                        expected = expected_nonce,
+                        tx_hash = ?tx.hash(),
+                        "GAP_TX_IN_BUILD skipping gap-nonce tx; sender invalidated for this build"
+                    );
+                    return Ok(PackOutcome::Invalid(InvalidPoolTransactionError::Consensus(
+                        InvalidTransactionError::NonceNotConsistent {
+                            tx: pool_tx.nonce(),
+                            state: expected_nonce,
+                        },
+                    )));
+                }
+
                 if sender_balance < new_cumulative_cost {
                     trace!(
                         target: "payload_builder",
@@ -347,6 +392,10 @@ where
 
             // Update sender's cumulative gas cost
             sender_cumulative_gas_cost.insert(sender, new_cumulative_cost);
+
+            // Advance the in-build expected nonce so subsequent txs from this
+            // sender are checked against the post-tx position.
+            sender_next_nonce.insert(sender, pool_tx.nonce() + 1);
 
             // add to the total blob gas used if the transaction successfully executed
             let mut saturated_blobs = false;
@@ -397,6 +446,7 @@ where
                 PackOutcome::Invalid(err) => {
                     best_txs_pass1.mark_invalid(&pool_tx, err);
                 }
+                PackOutcome::Skip => {}
                 PackOutcome::Cancelled => return Ok(BuildOutcome::Cancelled),
             }
         }
@@ -423,6 +473,7 @@ where
                     PackOutcome::Invalid(err) => {
                         best_txs_pass2.mark_invalid(&pool_tx, err);
                     }
+                    PackOutcome::Skip => {}
                     PackOutcome::Cancelled => return Ok(BuildOutcome::Cancelled),
                 }
             }

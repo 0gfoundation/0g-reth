@@ -21,6 +21,38 @@ use reth_primitives_traits::{
 /// `SAFETY_MARGIN` = `2_097_152`
 pub const MAX_RLP_BLOCK_SIZE: usize = 8_388_608;
 
+///  The chain ID for the 0G Chain devnet.
+pub const ZG_DEVNET_CHAIN_ID: u64 = 16_601;
+
+/// The chain ID for the 0G Chain testnet.
+pub const ZG_TESTNET_CHAIN_ID: u64 = 16_602;
+
+/// The chain ID for the 0G Chain mainnet.
+pub const ZG_MAINNET_CHAIN_ID: u64 = 16_661;
+
+/// Minimum gas limit hardfork timestamp for [`ZG_DEVNET_CHAIN_ID`].
+pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_DEVNET: u64 = 0;
+
+/// Minimum gas limit hardfork timestamp for [`ZG_TESTNET_CHAIN_ID`].
+pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_TESTNET: u64 = 1_777_852_800;
+
+/// Minimum gas limit hardfork timestamp for [`ZG_MAINNET_CHAIN_ID`].
+pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_MAINNET: u64 = 1_778_716_800;
+
+/// Block gas limit floor after the minimum-gas-limit hardfork (replaces [`MINIMUM_GAS_LIMIT`]).
+pub const MINIMUM_GAS_LIMIT_POST_FORK: u64 = 3_000_000;
+
+/// Activation timestamp for the minimum gas limit hardfork for the given `chain_id`.
+#[inline]
+pub const fn minimum_gas_limit_fork_timestamp(chain_id: u64) -> u64 {
+    match chain_id {
+        ZG_DEVNET_CHAIN_ID => MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_DEVNET,
+        ZG_TESTNET_CHAIN_ID => MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_TESTNET,
+        ZG_MAINNET_CHAIN_ID => MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_MAINNET,
+        _ => 0,
+    }
+}
+
 /// Gas used needs to be less than gas limit. Gas used is going to be checked after execution.
 #[inline]
 pub fn validate_header_gas<H: BlockHeader>(header: &H) -> Result<(), ConsensusError> {
@@ -369,6 +401,13 @@ pub fn validate_against_parent_gas_limit<
         parent.gas_limit()
     };
 
+    let effective_minimum_gas_limit =
+        if header.timestamp() >= minimum_gas_limit_fork_timestamp(chain_spec.chain_id()) {
+            MINIMUM_GAS_LIMIT_POST_FORK
+        } else {
+            MINIMUM_GAS_LIMIT
+        };
+
     // Check for an increase in gas limit beyond the allowed threshold.
     if header.gas_limit() > parent_gas_limit {
         if header.gas_limit() - parent_gas_limit >= parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR {
@@ -386,8 +425,11 @@ pub fn validate_against_parent_gas_limit<
         })
     }
     // Check if the self gas limit is below the minimum required limit.
-    else if header.gas_limit() < MINIMUM_GAS_LIMIT {
-        return Err(ConsensusError::GasLimitInvalidMinimum { child_gas_limit: header.gas_limit() })
+    else if header.gas_limit() < effective_minimum_gas_limit {
+        return Err(ConsensusError::GasLimitInvalidMinimum {
+            child_gas_limit: header.gas_limit(),
+            minimum_gas_limit: effective_minimum_gas_limit,
+        })
     }
 
     Ok(())
