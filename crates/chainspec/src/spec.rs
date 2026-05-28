@@ -33,6 +33,15 @@ use reth_network_peers::{
 };
 use reth_primitives_traits::{sync::LazyLock, SealedHeader};
 
+/// Deterministic Bridge proxy address shared across every 0G chain (mainnet, testnet, every
+/// satellite). Deployed via single-key throwaway raw txs at fixed nonces — see
+/// `0g-restaking-contracts/script/deploy/BridgeRawTxs.s.sol` for the generator and
+/// `deployments/bridge-raw-prod-0.json` for the pinned artifact. The CL side hardcodes the
+/// same value at `chain.BridgeContractAddressHex`. Surfaced through `bridge_contract_address`
+/// only on 0G chains (gated by `bridge_activation_time > 0`); Ethereum L1 specs keep the
+/// activation time at 0 and report `None`, preserving upstream behaviour.
+pub const BRIDGE_PROXY_ADDRESS: Address = address!("0x54EbF70B91fe29fdF6F5C6cF726983DDF0DE0750");
+
 /// Helper method building a [`Header`] given [`Genesis`] and [`ChainHardforks`].
 pub fn make_genesis_header(genesis: &Genesis, hardforks: &ChainHardforks) -> Header {
     // If London is activated at genesis, we set the initial base fee as per EIP-1559.
@@ -114,7 +123,6 @@ pub static MAINNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
         ]),
         staking_contract_address: None,
         staking_activation_time: 0,
-        bridge_contract_address: None,
         bridge_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
@@ -150,7 +158,6 @@ pub static SEPOLIA: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
         ]),
         staking_contract_address: None,
         staking_activation_time: 0,
-        bridge_contract_address: None,
         bridge_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
@@ -184,7 +191,6 @@ pub static HOLESKY: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
         ]),
         staking_contract_address: None,
         staking_activation_time: 0,
-        bridge_contract_address: None,
         bridge_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
@@ -220,7 +226,6 @@ pub static HOODI: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
         ]),
         staking_contract_address: None,
         staking_activation_time: 0,
-        bridge_contract_address: None,
         bridge_activation_time: 0,
     };
     spec.genesis.config.dao_fork_support = true;
@@ -332,13 +337,9 @@ pub struct ChainSpec {
 
     pub staking_activation_time: u64,
 
-    /// 0G bridge proxy contract address (hex-encoded `bridgeContractAddress` in genesis JSON).
-    ///
-    /// Must match the `BridgeContractAddress` field on the corresponding CL chainspec.
-    pub bridge_contract_address: Option<Address>,
-
     /// Unix timestamp at which the 0G bridge fork activates (`bridgeForkTime` in genesis JSON).
-    /// `0` means "never active". A non-zero value gates `executeRemoteMessages` system calls.
+    /// `0` means "never active". A non-zero value gates `executeRemoteMessages` system calls
+    /// and also flips `bridge_contract_address()` from `None` to `Some(BRIDGE_PROXY_ADDRESS)`.
     pub bridge_activation_time: u64,
 }
 
@@ -356,7 +357,6 @@ impl Default for ChainSpec {
             blob_params: Default::default(),
             staking_contract_address: None,
             staking_activation_time: 0,
-            bridge_contract_address: None,
             bridge_activation_time: 0,
         }
     }
@@ -755,14 +755,10 @@ impl From<Genesis> for ChainSpec {
             DepositContract { address, block: 0, topic: MAINNET_DEPOSIT_CONTRACT.topic }
         });
 
-        // 0G bridge fork config — read from genesis JSON `config.bridgeContractAddress` (hex)
-        // and `config.bridgeForkTime` (u64 unix timestamp). Both are optional; if either is
-        // missing the bridge stays disabled (default `None`/`0`).
-        let bridge_contract_address = genesis
-            .config
-            .extra_fields
-            .get_deserialized::<Address>("bridgeContractAddress")
-            .and_then(|r| r.ok());
+        // 0G bridge fork — read activation time from genesis JSON `config.bridgeForkTime`
+        // (u64 unix timestamp). The proxy address itself is a compile-time constant
+        // (`BRIDGE_PROXY_ADDRESS`) returned by the trait impl whenever activation time is
+        // non-zero; we no longer plumb it through genesis. `0` keeps the bridge disabled.
         let bridge_activation_time = genesis
             .config
             .extra_fields
@@ -783,7 +779,6 @@ impl From<Genesis> for ChainSpec {
             staking_contract_address: Some(address!("0xea224dBB52F57752044c0C86aD50930091F561B9")),
             staking_activation_time: 1769558400, // 2026-01-28 0:00:00 UTC [Mainnet Config]
             // staking_activation_time: 1767830400, // 2026-01-08 0:00:00 UTC [Testnet Config]
-            bridge_contract_address,
             bridge_activation_time,
             ..Default::default()
         }
@@ -1073,7 +1068,11 @@ impl EthExecutorSpec for ChainSpec {
     }
 
     fn bridge_contract_address(&self) -> Option<Address> {
-        self.bridge_contract_address
+        // Bridge address is a compile-time constant shared across every 0G chain. We surface it
+        // only when the bridge fork is configured (`bridge_activation_time > 0`); Ethereum L1
+        // mainnet/sepolia/holesky/hoodi keep activation_time = 0 and thus get `None`, the
+        // default upstream behaviour. See [`BRIDGE_PROXY_ADDRESS`] for the source.
+        (self.bridge_activation_time > 0).then_some(BRIDGE_PROXY_ADDRESS)
     }
 
     /// Bridge fork is active when an explicit non-zero `bridge_activation_time` has been

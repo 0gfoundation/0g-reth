@@ -857,7 +857,10 @@ mod bridge_tests {
     };
     use std::{borrow::Cow, sync::Arc};
 
-    const BRIDGE_ADDR: Address = address!("0x00000000000000000000000000000000000000B0");
+    // Must match `reth_chainspec::BRIDGE_PROXY_ADDRESS`: the bridge_contract_address() impl on
+    // ChainSpec returns that compile-time constant whenever the bridge fork is active, so the
+    // stub bytecode this test plants has to live at the same slot.
+    const BRIDGE_ADDR: Address = address!("0x54EbF70B91fe29fdF6F5C6cF726983DDF0DE0750");
 
     /// Returns the runtime bytecode of a tiny stub contract that, on any call:
     ///   * Copies the first 32 bytes of calldata into storage slot 0
@@ -895,16 +898,11 @@ mod bridge_tests {
             .cancun_activated()
             .prague_activated()
             .build();
-        // The builder returns a struct we can clone-and-mutate.
+        // The builder returns a struct we can clone-and-mutate. `bridge_contract_address()`
+        // is derived from `bridge_activation_time`: > 0 returns BRIDGE_PROXY_ADDRESS,
+        // 0 returns None. So toggling activation alone covers both branches.
         let mut spec = inner;
-        if bridge_active {
-            spec.bridge_contract_address = Some(BRIDGE_ADDR);
-            // `1` so any timestamp >= 1 activates the fork.
-            spec.bridge_activation_time = 1;
-        } else {
-            spec.bridge_contract_address = Some(BRIDGE_ADDR);
-            spec.bridge_activation_time = 0; // 0 means permanently disabled
-        }
+        spec.bridge_activation_time = if bridge_active { 1 } else { 0 };
         Arc::new(spec)
     }
 
