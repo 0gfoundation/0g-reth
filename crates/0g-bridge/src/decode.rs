@@ -263,6 +263,69 @@ mod tests {
         );
     }
 
+    /// Canonical hex for a one-message `BridgeRequests` fixture, shared verbatim with the CL
+    /// (Go) side in `0g-chain-ng/consensus-types/types/bridge_requests_test.go`. This is the
+    /// authoritative wire-format reference: any drift to the SSZ schema (field reorder,
+    /// endianness flip, derive-attribute change) on EITHER side will fail one of the two
+    /// language-side tests against this literal, surfacing a cross-language schema mismatch
+    /// before it can ship.
+    ///
+    /// **DO NOT edit this hex without updating the Go test's literal to match byte-for-byte**.
+    /// The fixture content (`sample_msg(7)` in Rust, identically constructed in the Go test):
+    ///   - src_chain_id = 16700, dst_chain_id = 16702, nonce = 7
+    ///   - local_token = [0x01; 20], recipient = [0x02; 20]
+    ///   - amount = 1e18 (BE bytes32), mode = MintBurn (1), src_block = 42
+    ///
+    /// See [`single_message_wire_format_byte_equal_to_cl_container`] above for the
+    /// byte-decomposition comment.
+    const CANONICAL_BRIDGE_REQUESTS_FIXTURE_HEX: &str =
+        "04000000\
+         3c41000000000000\
+         3e41000000000000\
+         0700000000000000\
+         0101010101010101010101010101010101010101\
+         0202020202020202020202020202020202020202\
+         0000000000000000000000000000000000000000000000000de0b6b3a7640000\
+         01\
+         2a00000000000000";
+
+    /// Cross-language SSZ fixture lock: decode the hex literal, assert every field, and
+    /// re-encode to verify the bytes round-trip. The same hex is asserted by Go's
+    /// `TestBridgeRequests_CrossLanguageFixture`. A schema regression on either side that
+    /// breaks the wire format will fail this test.
+    #[test]
+    fn cross_language_fixture_round_trips_bytes_and_fields() {
+        use alloy_primitives::hex;
+        let bytes = hex::decode(
+            CANONICAL_BRIDGE_REQUESTS_FIXTURE_HEX
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>(),
+        )
+        .expect("fixture hex must decode");
+        assert_eq!(bytes.len(), 109, "fixture must be 4-byte offset + 105-byte message");
+
+        // Decode: every field must match the canonical fixture values.
+        let decoded = BridgeRequests::from_ssz_bytes(&bytes).expect("fixture decodes");
+        assert_eq!(decoded.messages.len(), 1);
+        let m = &decoded.messages[0];
+        assert_eq!(m.src_chain_id, 16700);
+        assert_eq!(m.dst_chain_id, 16702);
+        assert_eq!(m.nonce, 7);
+        assert_eq!(m.local_token, FixedBytes([1u8; 20]));
+        assert_eq!(m.recipient, FixedBytes([2u8; 20]));
+        assert_eq!(m.amount, FixedBytes(U256::from(1_000_000_000_000_000_000u128).to_be_bytes::<32>()));
+        assert_eq!(m.mode, 1);
+        assert_eq!(m.src_block, 42);
+
+        // Re-encode: bytes must match the hex literal exactly.
+        let re_encoded = BridgeRequests { messages: vec![sample_msg(7)] }.as_ssz_bytes();
+        assert_eq!(
+            re_encoded, bytes,
+            "Rust encode of `sample_msg(7)` must equal the canonical cross-language hex literal"
+        );
+    }
+
     #[test]
     fn rejects_wrong_type_byte() {
         let body = BridgeRequests { messages: vec![sample_msg(1)] }.as_ssz_bytes();
