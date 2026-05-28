@@ -1171,8 +1171,8 @@ mod bridge_tests {
         // single-entry case: 0xf0 is the (only, therefore last) entry, and its type byte is the
         // bridge type byte. The stronger invariant "0xf0 comes strictly after 0x00/0x01/0x02
         // when they're present" is exercised separately by
-        // [`requests_hash_includes_0xf0_after_standard_pectra_types`], which builds a multi-type
-        // `Requests` directly and feeds it through the assembler.
+        // [`requests_hash_is_sensitive_to_0xf0_entry`], which builds a multi-type `Requests`
+        // directly and locks both the ascending type-byte order and the hash sensitivity.
         let spec = build_chain_spec(true);
         let raw = Bytes::from_static(&[0x04, 0x00, 0x00, 0x00, 0xDE, 0xAD]);
         let requests = finish_requests_with_raw(spec, None, Some(raw));
