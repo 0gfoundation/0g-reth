@@ -16,7 +16,7 @@ use reth_primitives_traits::{
     BlockBody as _, IndexedTx, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
     SignedTransaction,
 };
-use reth_storage_api::StateProviderBox;
+use reth_storage_api::{PerpHandle, PerpStateHandle, StateProviderBox};
 use reth_trie::{updates::TrieUpdates, HashedPostState};
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::{broadcast, watch};
@@ -166,6 +166,16 @@ impl<N: NodePrimitives> CanonicalInMemoryStateInner<N> {
     }
 }
 
+/// 把共享的 `canonical_perp` map 适配成 [`PerpStateHandle`] 读句柄。
+#[derive(Debug, Clone)]
+struct PerpStore(Arc<RwLock<HashMap<B256, Vec<u8>>>>);
+
+impl PerpStateHandle for PerpStore {
+    fn perp_get(&self, key: B256) -> Vec<u8> {
+        self.0.read().get(&key).cloned().unwrap_or_default()
+    }
+}
+
 type PendingBlockAndReceipts<N> =
     (RecoveredBlock<<N as NodePrimitives>::Block>, Vec<reth_primitives_traits::ReceiptTy<N>>);
 
@@ -237,6 +247,11 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     /// this is also the read handle the EVM cold-read path uses.
     pub fn canonical_perp(&self) -> Arc<RwLock<HashMap<B256, Vec<u8>>>> {
         self.inner.canonical_perp.clone()
+    }
+
+    /// 返回 off-trie PerpDEX 存储的 [`PerpStateHandle`] 读句柄，供 EVM 冷读路径(共识 + RPC)使用。
+    pub fn canonical_perp_handle(&self) -> PerpHandle {
+        Arc::new(PerpStore(self.inner.canonical_perp.clone()))
     }
 
     /// Merges a block's net off-trie PerpDEX writes ("PerpState") into the canonical store.
@@ -1034,6 +1049,19 @@ mod tests {
         // An empty delta is a no-op.
         state.merge_perp_delta(&HashMap::default());
         assert!(state.canonical_perp().read().is_empty());
+    }
+
+    #[test]
+    fn canonical_perp_handle_reads_committed_value() {
+        let state = CanonicalInMemoryState::<EthPrimitives>::empty();
+        let key = B256::with_last_byte(7);
+        let mut delta = HashMap::default();
+        delta.insert(key, vec![9u8, 9]);
+        state.merge_perp_delta(&delta);
+
+        let handle = state.canonical_perp_handle();
+        assert_eq!(handle.perp_get(key), vec![9u8, 9]);
+        assert!(handle.perp_get(B256::with_last_byte(8)).is_empty());
     }
 
     fn create_mock_state(
