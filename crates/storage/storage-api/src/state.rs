@@ -199,4 +199,11 @@ pub trait StateProviderFactory: BlockIdReader + Send + Sync {
     ///
     /// This will return `None` if there's no pending state.
     fn maybe_pending(&self) -> ProviderResult<Option<StateProviderBox>>;
+
+    /// 返回 off-trie PerpDEX 存储的读句柄，仅当该 provider 由 canonical 内存态支撑时为 `Some`。
+    ///
+    /// 默认 `None`(无 perp 存储的 provider，如 RPC/Noop/Mock provider)。
+    fn canonical_perp(&self) -> Option<crate::PerpHandle> {
+        None
+    }
 }
