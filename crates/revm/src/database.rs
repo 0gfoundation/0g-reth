@@ -169,3 +169,102 @@ impl<DB: EvmStateProvider> DatabaseRef for StateProviderDatabase<DB> {
         Ok(self.0.block_hash(number)?.unwrap_or_default())
     }
 }
+
+/// Cloneable read handle to the off-trie PerpDEX canonical store ("PerpState").
+///
+/// The same `Arc` is shared with `reth_chain_state::CanonicalInMemoryState::canonical_perp`; it
+/// maps a domain key to its committed orderbook blob (empty/absent => no committed value).
+#[cfg(feature = "std")]
+pub type PerpHandle =
+    std::sync::Arc<parking_lot::RwLock<alloy_primitives::map::HashMap<B256, alloc::vec::Vec<u8>>>>;
+
+/// Wraps a [`Database`]/[`DatabaseRef`] so off-trie PerpDEX cold reads resolve to the committed
+/// `canonical_perp` store, while all trie-backed reads forward unchanged to the inner database.
+///
+/// This is the read counterpart of revm's journal perp section: when the EVM's `perp_load` misses
+/// the in-block overlay, revm calls [`Database::perp_storage`], which resolves here to the
+/// committed off-trie store instead of returning empty. The perp store is intentionally NOT in the
+/// state trie, so it is served from this side channel rather than via [`Database::storage`].
+#[cfg(feature = "std")]
+#[derive(Clone)]
+pub struct PerpDb<DB> {
+    inner: DB,
+    perp: PerpHandle,
+}
+
+#[cfg(feature = "std")]
+impl<DB> PerpDb<DB> {
+    /// Wraps `inner`, serving perp cold reads from the shared `canonical_perp` handle.
+    pub const fn new(inner: DB, perp: PerpHandle) -> Self {
+        Self { inner, perp }
+    }
+
+    /// Consumes the wrapper, returning the inner database.
+    pub fn into_inner(self) -> DB {
+        self.inner
+    }
+
+    #[inline]
+    fn perp_get(&self, key: B256) -> alloc::vec::Vec<u8> {
+        self.perp.read().get(&key).cloned().unwrap_or_default()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<DB> core::fmt::Debug for PerpDb<DB> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PerpDb").finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<DB: Database> Database for PerpDb<DB> {
+    type Error = DB::Error;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.inner.basic(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.inner.code_by_hash(code_hash)
+    }
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.inner.storage(address, index)
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+        self.inner.block_hash(number)
+    }
+
+    /// Off-trie PerpDEX cold read: resolves from the committed `canonical_perp` store.
+    fn perp_storage(&mut self, key: B256) -> Result<alloc::vec::Vec<u8>, Self::Error> {
+        Ok(self.perp_get(key))
+    }
+}
+
+#[cfg(feature = "std")]
+impl<DB: DatabaseRef> DatabaseRef for PerpDb<DB> {
+    type Error = DB::Error;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.inner.basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.inner.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.inner.storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        self.inner.block_hash_ref(number)
+    }
+
+    /// Off-trie PerpDEX cold read: resolves from the committed `canonical_perp` store.
+    fn perp_storage_ref(&self, key: B256) -> Result<alloc::vec::Vec<u8>, Self::Error> {
+        Ok(self.perp_get(key))
+    }
+}

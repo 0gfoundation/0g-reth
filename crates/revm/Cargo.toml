@@ -24,6 +24,10 @@ alloy-primitives.workspace = true
 # revm
 revm.workspace = true
 
+# misc
+# Only needed by `PerpDb` (off-trie PerpState cold-read), which is std-gated.
+parking_lot = { workspace = true, optional = true }
+
 [dev-dependencies]
 reth-trie.workspace = true
 reth-ethereum-forks.workspace = true
@@ -39,6 +43,7 @@ std = [
     "reth-ethereum-forks/std",
     "reth-storage-api/std",
     "reth-storage-errors/std",
+    "dep:parking_lot",
 ]
 witness = ["dep:reth-trie"]
 test-utils = [
