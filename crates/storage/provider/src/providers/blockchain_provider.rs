@@ -609,6 +609,10 @@ impl<N: ProviderNodeTypes> StateProviderFactory for BlockchainProvider<N> {
 
         Ok(None)
     }
+
+    fn canonical_perp(&self) -> Option<reth_storage_api::PerpHandle> {
+        Some(self.canonical_in_memory_state.canonical_perp_handle())
+    }
 }
 
 impl<N: NodeTypesWithDB> HashedPostStateProvider for BlockchainProvider<N> {
@@ -798,6 +802,13 @@ mod tests {
     const TEST_BLOCKS_COUNT: usize = 5;
 
     const TEST_TRANSACTIONS_COUNT: u8 = 4;
+
+    #[test]
+    fn mock_provider_inherits_none_perp_handle() {
+        use reth_storage_api::StateProviderFactory;
+        let provider = crate::test_utils::MockEthProvider::default();
+        assert!(provider.canonical_perp().is_none());
+    }
 
     fn random_blocks(
         rng: &mut impl Rng,
