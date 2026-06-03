@@ -1,3 +1,4 @@
+use revm::context_interface::journaled_state::PerpDelta;
 use revm::database::BundleState;
 
 pub use alloy_evm::block::BlockExecutionResult;
@@ -22,4 +23,7 @@ pub struct BlockExecutionOutput<T> {
     pub result: BlockExecutionResult<T>,
     /// The changed state of the block after execution.
     pub state: BundleState,
+    /// Net off-trie PerpDEX writes ("PerpState") harvested during block execution, if any.
+    /// Carried alongside `state` but deliberately NOT folded into the bundle / state trie.
+    pub perp: Option<PerpDelta>,
 }

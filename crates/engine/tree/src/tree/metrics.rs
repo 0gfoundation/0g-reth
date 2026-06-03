@@ -84,19 +84,26 @@ impl EngineApiMetrics {
                 trace!(target: "engine::tree", "Executing transaction");
                 executor.execute_transaction(tx)?;
             }
-            executor.finish().map(|(evm, result)| (evm.into_db(), result))
+            let (mut evm, result) = executor.finish()?;
+            // Harvest the off-trie PerpDEX delta ("PerpState") while the EVM/journal is still
+            // alive, before `into_db` consumes it and drops the journal.
+            let perp = evm.take_perp_delta();
+            // Pin the error type: the original tail returned `finish().map(..)` (a Result with a
+            // known error type); the explicit `Ok` here would otherwise leave it ambiguous.
+            Ok::<_, BlockExecutionError>((evm.into_db(), perp, result))
         };
 
         // Use metered to execute and track timing/gas metrics
-        let (mut db, result) = self.metered(|| {
+        let (mut db, perp, result) = self.metered(|| {
             let res = f();
-            let gas_used = res.as_ref().map(|r| r.1.gas_used).unwrap_or(0);
+            let gas_used = res.as_ref().map(|r| r.2.gas_used).unwrap_or(0);
             (gas_used, res)
         })?;
 
         // merge transitions into bundle state
         db.borrow_mut().merge_transitions(BundleRetention::Reverts);
-        let output = BlockExecutionOutput { result, state: db.borrow_mut().take_bundle() };
+        let output =
+            BlockExecutionOutput { result, state: db.borrow_mut().take_bundle(), perp: Some(perp) };
 
         // Update the metrics for the number of accounts, storage slots and bytecodes updated
         let accounts = output.state.state.len();

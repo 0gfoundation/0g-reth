@@ -141,6 +141,12 @@ pub(crate) struct CanonicalInMemoryStateInner<N: NodePrimitives> {
     pub(crate) in_memory_state: InMemoryState<N>,
     /// A broadcast stream that emits events when the canonical chain is updated.
     pub(crate) canon_state_notification_sender: CanonStateNotificationSender<N>,
+    /// Off-trie PerpDEX canonical store ("PerpState"): committed orderbook blobs keyed by
+    /// domain key. Written only when a block enters the canonical chain (see
+    /// [`CanonicalInMemoryState::merge_perp_delta`]); read by the EVM cold-read path. An empty
+    /// value means the key is absent. Shared by every clone of [`CanonicalInMemoryState`] via
+    /// the surrounding `Arc`.
+    pub(crate) canonical_perp: Arc<RwLock<HashMap<B256, Vec<u8>>>>,
 }
 
 impl<N: NodePrimitives> CanonicalInMemoryStateInner<N> {
@@ -194,6 +200,7 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
                 chain_info_tracker,
                 in_memory_state,
                 canon_state_notification_sender,
+                canonical_perp: Default::default(),
             }),
         }
     }
@@ -218,9 +225,36 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
             chain_info_tracker,
             in_memory_state,
             canon_state_notification_sender,
+            canonical_perp: Default::default(),
         };
 
         Self { inner: Arc::new(inner) }
+    }
+
+    /// Returns a cloneable handle to the off-trie PerpDEX canonical store ("PerpState").
+    ///
+    /// The same `Arc` is shared by every clone of this state (provider, engine tree, RPC), so
+    /// this is also the read handle the EVM cold-read path uses.
+    pub fn canonical_perp(&self) -> Arc<RwLock<HashMap<B256, Vec<u8>>>> {
+        self.inner.canonical_perp.clone()
+    }
+
+    /// Merges a block's net off-trie PerpDEX writes ("PerpState") into the canonical store.
+    ///
+    /// An empty value deletes the key. Called when a block enters the canonical chain. No-op for
+    /// an empty delta.
+    pub fn merge_perp_delta(&self, delta: &HashMap<B256, Vec<u8>>) {
+        if delta.is_empty() {
+            return;
+        }
+        let mut store = self.inner.canonical_perp.write();
+        for (key, value) in delta {
+            if value.is_empty() {
+                store.remove(key);
+            } else {
+                store.insert(*key, value.clone());
+            }
+        }
     }
 
     /// Returns the block hash corresponding to the given number.
@@ -979,6 +1013,28 @@ mod tests {
         AccountProof, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
         StorageProof, TrieInput,
     };
+
+    #[test]
+    fn merge_perp_delta_inserts_and_deletes() {
+        let state = CanonicalInMemoryState::<EthPrimitives>::empty();
+        let key = B256::repeat_byte(7);
+
+        // A non-empty value inserts/overwrites.
+        let mut delta = HashMap::default();
+        delta.insert(key, vec![1u8, 2, 3]);
+        state.merge_perp_delta(&delta);
+        assert_eq!(state.canonical_perp().read().get(&key), Some(&vec![1u8, 2, 3]));
+
+        // An empty value deletes the key.
+        let mut delete = HashMap::default();
+        delete.insert(key, Vec::new());
+        state.merge_perp_delta(&delete);
+        assert!(state.canonical_perp().read().get(&key).is_none());
+
+        // An empty delta is a no-op.
+        state.merge_perp_delta(&HashMap::default());
+        assert!(state.canonical_perp().read().is_empty());
+    }
 
     fn create_mock_state(
         test_block_builder: &mut TestBlockBuilder<EthPrimitives>,
