@@ -4,7 +4,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 use reth_errors::ProviderResult;
-use reth_revm::{database::StateProviderDatabase, DatabaseRef};
+use reth_revm::{
+    database::{PerpDb, StateProviderDatabase},
+    DatabaseRef,
+};
 use reth_storage_api::{BytecodeReader, HashedPostStateProvider, StateProvider};
 use reth_trie::{HashedStorage, MultiProofTargets};
 use revm::{
@@ -14,8 +17,12 @@ use revm::{
     Database, DatabaseCommit,
 };
 
-/// Helper alias type for the state's [`CacheDB`]
-pub type StateCacheDb<'a> = CacheDB<StateProviderDatabase<StateProviderTraitObjWrapper<'a>>>;
+/// Helper alias type for the state's [`CacheDB`].
+///
+/// Wraps the trie-backed db in [`PerpDb`] so off-trie `PerpState` cold reads resolve to the
+/// committed `canonical_perp` store on the RPC call/trace execution paths.
+pub type StateCacheDb<'a> =
+    CacheDB<PerpDb<StateProviderDatabase<StateProviderTraitObjWrapper<'a>>>>;
 
 /// Hack to get around 'higher-ranked lifetime error', see
 /// <https://github.com/rust-lang/rust/issues/100013>

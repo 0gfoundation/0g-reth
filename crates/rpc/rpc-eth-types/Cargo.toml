@@ -21,7 +21,8 @@ reth-metrics.workspace = true
 reth-ethereum-primitives = { workspace = true, features = ["rpc"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 reth-storage-api.workspace = true
-reth-revm.workspace = true
+# std 启用 `PerpDb`(StateCacheDb 别名经其包裹 off-trie PerpState 冷读)。
+reth-revm = { workspace = true, features = ["std"] }
 reth-rpc-server-types.workspace = true
 reth-rpc-convert.workspace = true
 reth-tasks.workspace = true

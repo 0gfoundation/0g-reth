@@ -205,6 +205,11 @@ impl<DB> PerpDb<DB> {
         self.inner
     }
 
+    /// Returns a shared reference to the inner (trie-backed) database.
+    pub const fn inner(&self) -> &DB {
+        &self.inner
+    }
+
     #[inline]
     fn perp_get(&self, key: B256) -> alloc::vec::Vec<u8> {
         match &self.perp {
