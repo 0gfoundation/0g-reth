@@ -252,7 +252,6 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.21.3"
-source = "git+https://github.com/0gfoundation/alloy-evm?rev=d9253fe11c5c9d229231df15bfd928619ee53c08#d9253fe11c5c9d229231df15bfd928619ee53c08"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -6319,7 +6318,6 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "10.1.0"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "auto_impl",
  "revm",
@@ -10072,6 +10070,7 @@ version = "1.8.1"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
+ "parking_lot",
  "reth-ethereum-forks",
  "reth-primitives-traits",
  "reth-storage-api",
@@ -11005,7 +11004,6 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "29.0.1"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -11023,7 +11021,6 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "6.2.2"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "bitvec",
  "phf",
@@ -11034,7 +11031,6 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "9.1.0"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -11050,7 +11046,6 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "10.2.0"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -11065,7 +11060,6 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "7.0.5"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -11078,7 +11072,6 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "7.0.5"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "auto_impl",
  "either",
@@ -11090,7 +11083,6 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "10.0.1"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -11108,7 +11100,6 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "10.0.1"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "auto_impl",
  "either",
@@ -11145,7 +11136,6 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "25.0.3"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -11156,7 +11146,6 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "27.0.0"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -11188,7 +11177,6 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "20.2.1"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -11199,7 +11187,6 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "7.0.5"
-source = "git+https://github.com/0gfoundation/revm?rev=9bbdc91b26d41494b7870b2475e1ed4727eff8fc#9bbdc91b26d41494b7870b2475e1ed4727eff8fc"
 dependencies = [
  "bitflags 2.11.1",
  "revm-bytecode",

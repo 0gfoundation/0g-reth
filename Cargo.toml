@@ -714,19 +714,22 @@ walkdir = "2.3.3"
 vergen-git2 = "=1.0.5"
 
 [patch.crates-io]
-revm = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "revm-database-interface" }
-op-revm = { git = "https://github.com/0gfoundation/revm", rev = "9bbdc91b26d41494b7870b2475e1ed4727eff8fc", package = "op-revm" }
+# PerpState dev: revm + alloy-evm point at local sibling checkouts (working tree, incl. uncommitted
+# Phase-1 perp journal API). Restore the git-rev pins (revm 9bbdc91b, alloy-evm d9253fe) before
+# CI / teammate builds.
+revm = { path = "../revm/crates/revm" }
+revm-bytecode = { path = "../revm/crates/bytecode", package = "revm-bytecode" }
+revm-database = { path = "../revm/crates/database", package = "revm-database" }
+revm-state = { path = "../revm/crates/state", package = "revm-state" }
+revm-primitives = { path = "../revm/crates/primitives", package = "revm-primitives" }
+revm-interpreter = { path = "../revm/crates/interpreter", package = "revm-interpreter" }
+revm-inspector = { path = "../revm/crates/inspector", package = "revm-inspector" }
+revm-context = { path = "../revm/crates/context", package = "revm-context" }
+revm-context-interface = { path = "../revm/crates/context/interface", package = "revm-context-interface" }
+revm-database-interface = { path = "../revm/crates/database/interface", package = "revm-database-interface" }
+op-revm = { path = "../revm/crates/op-revm", package = "op-revm" }
 
-alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "d9253fe11c5c9d229231df15bfd928619ee53c08" }
+alloy-evm = { path = "../alloy-evm/crates/evm" }
 
 # Patch alloy 1.0.35 with 0g-alloy
 alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-consensus" }
