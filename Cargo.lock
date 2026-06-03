@@ -10072,7 +10072,6 @@ version = "1.8.1"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
- "parking_lot",
  "reth-ethereum-forks",
  "reth-primitives-traits",
  "reth-storage-api",

@@ -484,7 +484,7 @@ where
         );
 
         // Execute the block and handle any execution errors
-        let perp_handle = ctx.canonical_in_memory_state().canonical_perp();
+        let perp_handle = ctx.canonical_in_memory_state().canonical_perp_handle();
         let output = match if self.config.state_provider_metrics() {
             let state_provider = InstrumentedStateProvider::from_state_provider(&state_provider);
             let result =
@@ -730,7 +730,7 @@ where
         debug!(target: "engine::tree", "Executing block");
 
         let mut db = State::builder()
-            .with_database(PerpDb::new(StateProviderDatabase::new(&state_provider), perp))
+            .with_database(PerpDb::new(StateProviderDatabase::new(&state_provider), Some(perp)))
             .with_bundle_update()
             .without_state_clear()
             .build();
