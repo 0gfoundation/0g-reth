@@ -20,7 +20,10 @@ use jsonrpsee::core::RpcResult;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardfork, MAINNET, SEPOLIA};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{BlockBody, BlockHeader};
-use reth_revm::{database::StateProviderDatabase, db::CacheDB};
+use reth_revm::{
+    database::{PerpDb, StateProviderDatabase},
+    db::CacheDB,
+};
 use reth_rpc_api::TraceApiServer;
 use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
@@ -154,11 +157,13 @@ where
         let (evm_env, at) = self.eth_api().evm_env_at(at).await?;
 
         let this = self.clone();
+        let perp = self.eth_api().perp_handle();
         // execute all transactions on top of each other and record the traces
         self.eth_api()
             .spawn_with_state_at_block(at, move |state| {
                 let mut results = Vec::with_capacity(calls.len());
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
+                let mut db =
+                    CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
 
                 let mut calls = calls.into_iter().peekable();
 

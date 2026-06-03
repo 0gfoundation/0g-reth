@@ -21,7 +21,7 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_evm::{execute::Executor, ConfigureEvm, EvmEnvFor, TxEnvFor};
 use reth_primitives_traits::{Block as _, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use reth_revm::{
-    database::StateProviderDatabase,
+    database::{PerpDb, StateProviderDatabase},
     db::{CacheDB, State},
     witness::ExecutionWitnessRecord,
 };
@@ -95,10 +95,12 @@ where
     ) -> Result<Vec<TraceResult>, Eth::Error> {
         // replay all transactions of the block
         let this = self.clone();
+        let perp = self.eth_api().perp_handle();
         self.eth_api()
             .spawn_with_state_at_block(block.parent_hash().into(), move |state| {
                 let mut results = Vec::with_capacity(block.body().transactions().len());
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
+                let mut db =
+                    CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
 
                 this.eth_api().apply_pre_execution_changes(&block, &mut db, &evm_env)?;
 
@@ -220,6 +222,7 @@ where
         let block_hash = block.hash();
 
         let this = self.clone();
+        let perp = self.eth_api().perp_handle();
         self.eth_api()
             .spawn_with_state_at_block(state_at, move |state| {
                 let block_txs = block.transactions_recovered();
@@ -227,7 +230,8 @@ where
                 // configure env for the target transaction
                 let tx = transaction.into_recovered();
 
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
+                let mut db =
+                    CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
 
                 this.eth_api().apply_pre_execution_changes(&block, &mut db, &evm_env)?;
 
@@ -522,12 +526,14 @@ where
         }
 
         let this = self.clone();
+        let perp = self.eth_api().perp_handle();
 
         self.eth_api()
             .spawn_with_state_at_block(at.into(), move |state| {
                 // the outer vec for the bundles
                 let mut all_bundles = Vec::with_capacity(bundles.len());
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
+                let mut db =
+                    CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
 
                 if replay_block_txs {
                     // only need to replay the transactions in the block if not all transactions are
@@ -634,11 +640,12 @@ where
     ) -> Result<ExecutionWitness, Eth::Error> {
         let this = self.clone();
         let block_number = block.header().number();
+        let perp = self.eth_api().perp_handle();
 
         let (mut exec_witness, lowest_block_number) = self
             .eth_api()
             .spawn_with_state_at_block(block.parent_hash().into(), move |state_provider| {
-                let db = StateProviderDatabase::new(&state_provider);
+                let db = PerpDb::new(StateProviderDatabase::new(&state_provider), perp.clone());
                 let block_executor = this.eth_api().evm_config().executor(db);
 
                 let mut witness_record = ExecutionWitnessRecord::default();
