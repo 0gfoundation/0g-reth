@@ -111,14 +111,11 @@ impl<N: ProviderNodeTypes> BlockchainProvider<N> {
             .map(|num| provider.sealed_header(num))
             .transpose()?
             .flatten();
-        Ok(Self {
-            database: storage,
-            canonical_in_memory_state: CanonicalInMemoryState::with_head(
-                latest,
-                finalized_header,
-                safe_header,
-            ),
-        })
+        let canonical_in_memory_state =
+            CanonicalInMemoryState::with_head(latest, finalized_header, safe_header);
+        // Seed the off-trie PerpDEX store from its durable table so perp state survives restart.
+        canonical_in_memory_state.seed_perp(provider.read_all_perp_state()?);
+        Ok(Self { database: storage, canonical_in_memory_state })
     }
 
     /// Gets a clone of `canonical_in_memory_state`.
