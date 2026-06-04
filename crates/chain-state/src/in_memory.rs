@@ -272,6 +272,14 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
         }
     }
 
+    /// Replaces the entire off-trie PerpDEX store with `map`. Called ONCE at node startup to
+    /// seed `canonical_perp` from the durable `PerpState` table (state as of the persisted
+    /// head); the unpersisted tail is then rebuilt by re-executing re-fed blocks. Unlike
+    /// [`Self::merge_perp_delta`] this overwrites rather than merges.
+    pub fn seed_perp(&self, map: HashMap<B256, Vec<u8>>) {
+        *self.inner.canonical_perp.write() = map;
+    }
+
     /// Returns the block hash corresponding to the given number.
     pub fn hash_by_number(&self, number: u64) -> Option<B256> {
         self.inner.in_memory_state.hash_by_number(number)
@@ -1049,6 +1057,25 @@ mod tests {
         // An empty delta is a no-op.
         state.merge_perp_delta(&HashMap::default());
         assert!(state.canonical_perp().read().is_empty());
+    }
+
+    #[test]
+    fn seed_perp_replaces_whole_map() {
+        let state = CanonicalInMemoryState::<EthPrimitives>::empty();
+        // pre-existing junk that seed must clear:
+        state.merge_perp_delta(&HashMap::from_iter([(B256::with_last_byte(9), vec![0xFF])]));
+
+        let mut snapshot = HashMap::default();
+        snapshot.insert(B256::with_last_byte(1), vec![0xAA]);
+        snapshot.insert(B256::with_last_byte(2), vec![0xBB]);
+        state.seed_perp(snapshot);
+
+        let store = state.canonical_perp();
+        let g = store.read();
+        assert_eq!(g.get(&B256::with_last_byte(1)), Some(&vec![0xAAu8]));
+        assert_eq!(g.get(&B256::with_last_byte(2)), Some(&vec![0xBBu8]));
+        assert!(g.get(&B256::with_last_byte(9)).is_none()); // replaced, not merged
+        assert_eq!(g.len(), 2);
     }
 
     #[test]
