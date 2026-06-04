@@ -42,7 +42,12 @@ pub const BRIDGE_REQUEST_TYPE: u8 = 0xf0;
 /// Pinned in the cross-stream schema; matches the CL builder budget. Decoders enforce this
 /// at the byte level — a longer list aborts payload validation rather than silently
 /// truncating, see [`BridgeDecodeError::TooManyMessages`].
-pub const MAX_BRIDGE_MESSAGES_PER_BLOCK: usize = 64;
+///
+/// Consensus parameter: MUST equal the CL `constants.MaxBridgeMessagesPerBlock`. Sized so the
+/// destination `executeRemoteMessages` system call (30M gas, per-message capped at
+/// PER_MESSAGE_GAS_CAP=400k in the Bridge contract) can never exhaust gas and revert the whole
+/// batch even if every message fails delivery (48 × ~540k ≈ 26.4M < 30M).
+pub const MAX_BRIDGE_MESSAGES_PER_BLOCK: usize = 48;
 
 /// Bridge transfer modes mirrored from the Solidity enum. Values must stay byte-identical
 /// across CL Go, EL Rust, and Solidity — `LockRelease = 0`, `MintBurn = 1`.
