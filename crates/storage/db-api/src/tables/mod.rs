@@ -523,6 +523,14 @@ tables! {
         type Key = ChainStateKey;
         type Value = BlockNumber;
     }
+
+    /// Off-trie PerpDEX canonical store ("PerpState"): committed orderbook blobs keyed by a
+    /// 32-byte domain key. Written at block persistence (atomically with block state) and read
+    /// at startup to seed the in-memory `canonical_perp`. Off the state trie / state root.
+    table PerpState {
+        type Key = B256;
+        type Value = Vec<u8>;
+    }
 }
 
 /// Keys for the `ChainState` table.
