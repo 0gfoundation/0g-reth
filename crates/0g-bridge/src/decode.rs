@@ -206,10 +206,10 @@ mod tests {
     /// Single-message wire compatibility: byte-level fixture against the canonical
     /// `BridgeMessage` SSZ layout. A length-only assertion would silently accept any
     /// field-order swap (e.g. swapping two `u64` fields or flipping `amount` endianness)
-    /// because the total still rounds to 109 bytes — exactly the regression class that
-    /// produced [Bug #2 in 2026-04-29 Session 5](docs/integration-tests/findings.md): a
-    /// schema-shape mismatch between Rust and Go that passed all reth-side roundtrip tests
-    /// but failed at the cross-language wire boundary. Hardcoding the expected bytes here
+    /// because the total still rounds to 109 bytes — exactly the regression class behind a
+    /// real cross-language bug caught in earlier testing: a schema-shape mismatch between the
+    /// Rust and Go `BridgeMessage` SSZ derives that passed all reth-side roundtrip tests but
+    /// failed at the cross-language wire boundary. Hardcoding the expected bytes here
     /// locks the field order, byte width, and endianness; any single-byte change to the
     /// `BridgeMessage` SSZ derive immediately breaks this test. The CL side is expected to
     /// mirror this fixture against the same byte literal (tracked separately as a cross-PR
@@ -258,8 +258,7 @@ mod tests {
             "BridgeRequests SSZ wire format must match the canonical 4-byte-offset + 105-byte \
              container layout byte-for-byte; any drift (field reorder, endianness flip, or \
              derive-attribute change) indicates a schema regression that would break cross-language \
-             wire compatibility with CL — see 2026-04-29 Session 5 Bug #2 in integration-tests \
-             findings.md."
+             wire compatibility with CL."
         );
     }
 
