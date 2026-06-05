@@ -126,6 +126,12 @@ where
         new_tip_num: u64,
     ) -> Result<Option<BlockNumHash>, PersistenceError> {
         debug!(target: "engine::persistence", ?new_tip_num, "Removing blocks");
+        tracing::warn!(
+            target: "engine::persistence",
+            "RemoveBlocksAbove fired: PerpState table is NOT rolled back here. If a real reorg \
+             occurred, the off-trie perp store may now be inconsistent with the canonical chain \
+             (reorg support for perp is out of scope; single-node/no-reorg assumption)."
+        );
         let start_time = Instant::now();
         let provider_rw = self.provider.database_provider_rw()?;
         let sf_provider = self.provider.static_file_provider();
@@ -151,10 +157,21 @@ where
         });
 
         if last_block_hash_num.is_some() {
+            // Harvest each block's off-trie PerpDEX delta BEFORE `blocks` is moved into save_blocks.
+            let perp_deltas: Vec<alloy_primitives::map::HashMap<alloy_primitives::B256, Vec<u8>>> =
+                blocks.iter().filter_map(|b| b.block.execution_output.perp.clone()).collect();
+
             let provider_rw = self.provider.database_provider_rw()?;
             let static_file_provider = self.provider.static_file_provider();
 
             UnifiedStorageWriter::from(&provider_rw, &static_file_provider).save_blocks(blocks)?;
+
+            // Apply the perp deltas in the SAME RW txn, so they commit atomically with block state.
+            // Order matters only for last-write-wins per key; block order is preserved here.
+            for delta in &perp_deltas {
+                provider_rw.write_perp_state_delta(delta)?;
+            }
+
             UnifiedStorageWriter::commit(provider_rw)?;
         }
         self.metrics.save_blocks_duration_seconds.record(start_time.elapsed());

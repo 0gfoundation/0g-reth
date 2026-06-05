@@ -2165,6 +2165,17 @@ where
             self.reinsert_reorged_blocks(old);
         }
 
+        // Merge each committed block's off-trie PerpDEX writes ("PerpState") into the canonical
+        // perp store before `chain_update` is consumed below. Commit-only: the single-node scope
+        // has no reorgs (see docs/perpstate-journal集成方案.md §8.1). Empty value = delete the key.
+        if let NewCanonicalChain::Commit { new } = &chain_update {
+            for block in new {
+                if let Some(delta) = &block.execution_output.perp {
+                    self.canonical_in_memory_state.merge_perp_delta(delta);
+                }
+            }
+        }
+
         // update the tracked in-memory state with the new chain
         self.canonical_in_memory_state.update_chain(chain_update);
         self.canonical_in_memory_state.set_canonical_head(tip.clone());

@@ -42,6 +42,9 @@ pub use receipts::*;
 mod stage_checkpoint;
 pub use stage_checkpoint::*;
 
+mod perp;
+pub use perp::{PerpHandle, PerpStateHandle};
+
 mod state;
 pub use state::*;
 

@@ -111,14 +111,11 @@ impl<N: ProviderNodeTypes> BlockchainProvider<N> {
             .map(|num| provider.sealed_header(num))
             .transpose()?
             .flatten();
-        Ok(Self {
-            database: storage,
-            canonical_in_memory_state: CanonicalInMemoryState::with_head(
-                latest,
-                finalized_header,
-                safe_header,
-            ),
-        })
+        let canonical_in_memory_state =
+            CanonicalInMemoryState::with_head(latest, finalized_header, safe_header);
+        // Seed the off-trie PerpDEX store from its durable table so perp state survives restart.
+        canonical_in_memory_state.seed_perp(provider.read_all_perp_state()?);
+        Ok(Self { database: storage, canonical_in_memory_state })
     }
 
     /// Gets a clone of `canonical_in_memory_state`.
@@ -609,6 +606,10 @@ impl<N: ProviderNodeTypes> StateProviderFactory for BlockchainProvider<N> {
 
         Ok(None)
     }
+
+    fn canonical_perp(&self) -> Option<reth_storage_api::PerpHandle> {
+        Some(self.canonical_in_memory_state.canonical_perp_handle())
+    }
 }
 
 impl<N: NodeTypesWithDB> HashedPostStateProvider for BlockchainProvider<N> {
@@ -798,6 +799,13 @@ mod tests {
     const TEST_BLOCKS_COUNT: usize = 5;
 
     const TEST_TRANSACTIONS_COUNT: u8 = 4;
+
+    #[test]
+    fn mock_provider_inherits_none_perp_handle() {
+        use reth_storage_api::StateProviderFactory;
+        let provider = crate::test_utils::MockEthProvider::default();
+        assert!(provider.canonical_perp().is_none());
+    }
 
     fn random_blocks(
         rng: &mut impl Rng,
@@ -2602,6 +2610,44 @@ mod tests {
                 Ok(Some(to_be_persisted_tx))
             ));
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn restart_recovers_perp_state_from_db() -> eyre::Result<()> {
+        use alloy_primitives::map::HashMap;
+
+        // Build a factory with a persisted head. This crate's tests obtain a head by inserting
+        // a block range into the DB (mirroring `test_block_reader_find_block_by_hash`) rather
+        // than `reth_db_common::init::init_genesis`, which is not a dependency here.
+        let mut rng = generators::rng();
+        let factory = create_test_provider_factory();
+        let blocks = random_block_range(
+            &mut rng,
+            0..=0,
+            BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
+        );
+
+        // Persist some perp state (as the persistence service would, atomically with a txn) and
+        // a block so `BlockchainProvider::new` finds a head.
+        let k = B256::with_last_byte(7);
+        let mut delta: HashMap<B256, Vec<u8>> = HashMap::default();
+        delta.insert(k, vec![0xDE, 0xAD]);
+        let provider_rw = factory.provider_rw()?;
+        for block in &blocks {
+            provider_rw.insert_historical_block(
+                block.clone().try_recover().expect("failed to seal block with senders"),
+            )?;
+        }
+        provider_rw.write_perp_state_delta(&delta)?;
+        provider_rw.commit()?;
+
+        // "Restart": brand-new BlockchainProvider over the same (persisted) factory. Fresh
+        // in-memory state, reused DB.
+        let bp = BlockchainProvider::new(factory)?;
+        let store = bp.canonical_in_memory_state().canonical_perp();
+        assert_eq!(store.read().get(&k), Some(&vec![0xDEu8, 0xAD]));
 
         Ok(())
     }

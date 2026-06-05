@@ -13,7 +13,10 @@ use reth_evm::{
     Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor, TxEnvFor,
 };
 use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
-use reth_revm::{database::StateProviderDatabase, db::CacheDB};
+use reth_revm::{
+    database::{PerpDb, StateProviderDatabase},
+    db::CacheDB,
+};
 use reth_rpc_eth_types::{
     cache::db::{StateCacheDb, StateCacheDbRefMutWrapper, StateProviderTraitObjWrapper},
     EthApiError,
@@ -67,8 +70,9 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> {
             + Send
             + 'static,
     {
+        let perp = self.perp_handle();
         self.with_state_at_block(at, move |this, state| {
-            let mut db = CacheDB::new(StateProviderDatabase::new(state));
+            let mut db = CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
             let mut inspector = TracingInspector::new(config);
             let res = this.inspect(&mut db, evm_env, tx_env, &mut inspector)?;
             f(inspector, res)
@@ -102,8 +106,9 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> {
         R: Send + 'static,
     {
         let this = self.clone();
+        let perp = self.perp_handle();
         self.spawn_with_state_at_block(at, move |state| {
-            let mut db = CacheDB::new(StateProviderDatabase::new(state));
+            let mut db = CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
             let mut inspector = TracingInspector::new(config);
             let res = this.inspect(&mut db, evm_env, tx_env, &mut inspector)?;
             f(inspector, res, db)
@@ -183,8 +188,9 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> {
             let parent_block = block.parent_hash();
 
             let this = self.clone();
+            let perp = self.perp_handle();
             self.spawn_with_state_at_block(parent_block.into(), move |state| {
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
+                let mut db = CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
                 let block_txs = block.transactions_recovered();
 
                 this.apply_pre_execution_changes(&block, &mut db, &evm_env)?;
@@ -295,6 +301,7 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> {
             }
 
             // replay all transactions of the block
+            let perp = self.perp_handle();
             self.spawn_blocking_io_fut(move |this| async move {
                 // we need to get the state of the parent block because we're replaying this block
                 // on top of its parent block's state
@@ -306,8 +313,10 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> {
 
                 // now get the state
                 let state = this.state_at_block_id(state_at.into()).await?;
-                let mut db =
-                    CacheDB::new(StateProviderDatabase::new(StateProviderTraitObjWrapper(&state)));
+                let mut db = CacheDB::new(PerpDb::new(
+                    StateProviderDatabase::new(StateProviderTraitObjWrapper(&state)),
+                    perp.clone(),
+                ));
 
                 this.apply_pre_execution_changes(&block, &mut db, &evm_env)?;
 

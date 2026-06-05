@@ -40,6 +40,7 @@ use reth_provider::{
     ProviderError, StateProvider, StateProviderFactory, StateReader, StateRootProvider,
 };
 use reth_revm::db::State;
+use reth_revm::database::{PerpDb, PerpHandle};
 use reth_trie::{updates::TrieUpdates, HashedPostState, KeccakKeyHasher, TrieInput};
 use reth_trie_db::DatabaseHashedPostState;
 use reth_trie_parallel::root::{ParallelStateRoot, ParallelStateRootError};
@@ -483,13 +484,15 @@ where
         );
 
         // Execute the block and handle any execution errors
+        let perp_handle = ctx.canonical_in_memory_state().canonical_perp_handle();
         let output = match if self.config.state_provider_metrics() {
             let state_provider = InstrumentedStateProvider::from_state_provider(&state_provider);
-            let result = self.execute_block(&state_provider, env, &input, &mut handle);
+            let result =
+                self.execute_block(&state_provider, env, &input, &mut handle, perp_handle.clone());
             state_provider.record_total_latency();
             result
         } else {
-            self.execute_block(&state_provider, env, &input, &mut handle)
+            self.execute_block(&state_provider, env, &input, &mut handle, perp_handle)
         } {
             Ok(output) => output,
             Err(err) => return self.handle_execution_error(input, err, &parent_block),
@@ -709,6 +712,9 @@ where
         env: ExecutionEnv<Evm>,
         input: &BlockOrPayload<T>,
         handle: &mut PayloadHandle<impl ExecutableTxFor<Evm>, Err>,
+        // Off-trie PerpDEX ("PerpState") committed-store read handle; wraps the execution DB in
+        // `PerpDb` so the EVM's perp cold-read resolves to `canonical_perp` (off the state trie).
+        perp: PerpHandle,
     ) -> Result<BlockExecutionOutput<N::Receipt>, InsertBlockErrorKind>
     where
         S: StateProvider,
@@ -724,7 +730,7 @@ where
         debug!(target: "engine::tree", "Executing block");
 
         let mut db = State::builder()
-            .with_database(StateProviderDatabase::new(&state_provider))
+            .with_database(PerpDb::new(StateProviderDatabase::new(&state_provider), Some(perp)))
             .with_bundle_update()
             .without_state_clear()
             .build();

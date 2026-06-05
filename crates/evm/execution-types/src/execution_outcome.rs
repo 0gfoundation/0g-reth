@@ -5,6 +5,7 @@ use alloy_primitives::{logs_bloom, map::HashMap, Address, BlockNumber, Bloom, Lo
 use reth_primitives_traits::{Account, Bytecode, Receipt, StorageEntry};
 use reth_trie_common::{HashedPostState, KeyHasher};
 use revm::{
+    context_interface::journaled_state::PerpDelta,
     database::{states::BundleState, BundleAccount},
     state::AccountInfo,
 };
@@ -59,6 +60,11 @@ pub struct ExecutionOutcome<T = reth_ethereum_primitives::Receipt> {
     /// A transaction may have zero or more requests, so the length of the inner vector is not
     /// guaranteed to be the same as the number of transactions.
     pub requests: Vec<Requests>,
+    /// Net off-trie PerpDEX writes ("PerpState") for the contained block(s), if any.
+    /// Kept in-memory only: skipped by serde so it never enters persisted / bincode state,
+    /// and never folded into `bundle` or the state trie. Empty value in the map = delete key.
+    #[cfg_attr(feature = "serde", serde(default, skip))]
+    pub perp: Option<PerpDelta>,
 }
 
 impl<T> Default for ExecutionOutcome<T> {
@@ -68,6 +74,7 @@ impl<T> Default for ExecutionOutcome<T> {
             receipts: Default::default(),
             first_block: Default::default(),
             requests: Default::default(),
+            perp: None,
         }
     }
 }
@@ -83,7 +90,7 @@ impl<T> ExecutionOutcome<T> {
         first_block: BlockNumber,
         requests: Vec<Requests>,
     ) -> Self {
-        Self { bundle, receipts, first_block, requests }
+        Self { bundle, receipts, first_block, requests, perp: None }
     }
 
     /// Creates a new `ExecutionOutcome` from initialization parameters.
@@ -125,7 +132,7 @@ impl<T> ExecutionOutcome<T> {
             contracts_init.into_iter().map(|(code_hash, bytecode)| (code_hash, bytecode.0)),
         );
 
-        Self { bundle, receipts, first_block, requests }
+        Self { bundle, receipts, first_block, requests, perp: None }
     }
 
     /// Creates a new `ExecutionOutcome` from a single block execution result.
@@ -135,6 +142,7 @@ impl<T> ExecutionOutcome<T> {
             receipts: vec![output.result.receipts],
             first_block: block_number,
             requests: vec![output.result.requests],
+            perp: output.perp,
         }
     }
 
@@ -144,7 +152,8 @@ impl<T> ExecutionOutcome<T> {
         bundle: BundleState,
         results: Vec<BlockExecutionResult<T>>,
     ) -> Self {
-        let mut value = Self { bundle, first_block, receipts: Vec::new(), requests: Vec::new() };
+        let mut value =
+            Self { bundle, first_block, receipts: Vec::new(), requests: Vec::new(), perp: None };
         for result in results {
             value.receipts.push(result.receipts);
             value.requests.push(result.requests);
@@ -472,6 +481,8 @@ pub(super) mod serde_bincode_compat {
                     .collect(),
                 first_block: value.first_block,
                 requests: value.requests.into_owned(),
+                // perp is in-memory only; reconstructed empty from the bincode mirror.
+                perp: None,
             }
         }
     }
@@ -587,6 +598,7 @@ mod tests {
             receipts: receipts.clone(),
             requests: requests.clone(),
             first_block,
+            perp: None,
         };
 
         // Assert that creating a new ExecutionOutcome using the constructor matches exec_res
@@ -643,6 +655,7 @@ mod tests {
             receipts,
             requests: vec![],
             first_block,
+            perp: None,
         };
 
         // Test before the first block
@@ -675,6 +688,7 @@ mod tests {
             receipts,
             requests: vec![],
             first_block,
+            perp: None,
         };
 
         // Get logs for block number 123
@@ -704,6 +718,7 @@ mod tests {
             receipts,                   // Include the created receipts
             requests: vec![],           // Empty vector for requests
             first_block,                // Set the first block number
+            perp: None,
         };
 
         // Get receipts for block number 123 and convert the result into a vector
@@ -744,6 +759,7 @@ mod tests {
             receipts,                   // Include the created receipts
             requests: vec![],           // Empty vector for requests
             first_block,                // Set the first block number
+            perp: None,
         };
 
         // Assert that the length of receipts in exec_res is 1
@@ -758,6 +774,7 @@ mod tests {
             receipts: receipts_empty,   // Include the empty receipts
             requests: vec![],           // Empty vector for requests
             first_block,                // Set the first block number
+            perp: None,
         };
 
         // Assert that the length of receipts in exec_res_empty_receipts is 0
@@ -793,7 +810,7 @@ mod tests {
         // Create a ExecutionOutcome object with the created bundle, receipts, requests, and
         // first_block
         let mut exec_res =
-            ExecutionOutcome { bundle: Default::default(), receipts, requests, first_block };
+            ExecutionOutcome { bundle: Default::default(), receipts, requests, first_block, perp: None };
 
         // Assert that the revert_to method returns true when reverting to the initial block number.
         assert!(exec_res.revert_to(123));
@@ -837,7 +854,7 @@ mod tests {
 
         // Create an ExecutionOutcome object.
         let mut exec_res =
-            ExecutionOutcome { bundle: Default::default(), receipts, requests, first_block };
+            ExecutionOutcome { bundle: Default::default(), receipts, requests, first_block, perp: None };
 
         // Extend the ExecutionOutcome object by itself.
         exec_res.extend(exec_res.clone());
@@ -850,6 +867,7 @@ mod tests {
                 receipts: vec![vec![Some(receipt.clone())], vec![Some(receipt)]],
                 requests: vec![Requests::new(vec![request.clone()]), Requests::new(vec![request])],
                 first_block: 123,
+                perp: None,
             }
         );
     }
@@ -887,7 +905,7 @@ mod tests {
         // Create a ExecutionOutcome object with the created bundle, receipts, requests, and
         // first_block
         let exec_res =
-            ExecutionOutcome { bundle: Default::default(), receipts, requests, first_block };
+            ExecutionOutcome { bundle: Default::default(), receipts, requests, first_block, perp: None };
 
         // Split the ExecutionOutcome at block number 124
         let result = exec_res.clone().split_at(124);
@@ -898,6 +916,7 @@ mod tests {
             receipts: vec![vec![Some(receipt.clone())]],
             requests: vec![Requests::new(vec![request.clone()])],
             first_block,
+            perp: None,
         };
 
         // Define the expected higher ExecutionOutcome after splitting
@@ -906,6 +925,7 @@ mod tests {
             receipts: vec![vec![Some(receipt.clone())], vec![Some(receipt)]],
             requests: vec![Requests::new(vec![request.clone()]), Requests::new(vec![request])],
             first_block: 124,
+            perp: None,
         };
 
         // Assert that the split result matches the expected lower and higher outcomes
@@ -966,6 +986,7 @@ mod tests {
             receipts: Default::default(),
             first_block: 0,
             requests: vec![],
+            perp: None,
         };
 
         // Get the changed accounts

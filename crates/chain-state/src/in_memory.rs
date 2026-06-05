@@ -16,7 +16,7 @@ use reth_primitives_traits::{
     BlockBody as _, IndexedTx, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
     SignedTransaction,
 };
-use reth_storage_api::StateProviderBox;
+use reth_storage_api::{PerpHandle, PerpStateHandle, StateProviderBox};
 use reth_trie::{updates::TrieUpdates, HashedPostState};
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::{broadcast, watch};
@@ -141,6 +141,12 @@ pub(crate) struct CanonicalInMemoryStateInner<N: NodePrimitives> {
     pub(crate) in_memory_state: InMemoryState<N>,
     /// A broadcast stream that emits events when the canonical chain is updated.
     pub(crate) canon_state_notification_sender: CanonStateNotificationSender<N>,
+    /// Off-trie PerpDEX canonical store ("PerpState"): committed orderbook blobs keyed by
+    /// domain key. Written only when a block enters the canonical chain (see
+    /// [`CanonicalInMemoryState::merge_perp_delta`]); read by the EVM cold-read path. An empty
+    /// value means the key is absent. Shared by every clone of [`CanonicalInMemoryState`] via
+    /// the surrounding `Arc`.
+    pub(crate) canonical_perp: Arc<RwLock<HashMap<B256, Vec<u8>>>>,
 }
 
 impl<N: NodePrimitives> CanonicalInMemoryStateInner<N> {
@@ -157,6 +163,16 @@ impl<N: NodePrimitives> CanonicalInMemoryStateInner<N> {
             });
         }
         self.in_memory_state.update_metrics();
+    }
+}
+
+/// 把共享的 `canonical_perp` map 适配成 [`PerpStateHandle`] 读句柄。
+#[derive(Debug, Clone)]
+struct PerpStore(Arc<RwLock<HashMap<B256, Vec<u8>>>>);
+
+impl PerpStateHandle for PerpStore {
+    fn perp_get(&self, key: B256) -> Vec<u8> {
+        self.0.read().get(&key).cloned().unwrap_or_default()
     }
 }
 
@@ -194,6 +210,7 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
                 chain_info_tracker,
                 in_memory_state,
                 canon_state_notification_sender,
+                canonical_perp: Default::default(),
             }),
         }
     }
@@ -218,9 +235,49 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
             chain_info_tracker,
             in_memory_state,
             canon_state_notification_sender,
+            canonical_perp: Default::default(),
         };
 
         Self { inner: Arc::new(inner) }
+    }
+
+    /// Returns a cloneable handle to the off-trie PerpDEX canonical store ("PerpState").
+    ///
+    /// The same `Arc` is shared by every clone of this state (provider, engine tree, RPC), so
+    /// this is also the read handle the EVM cold-read path uses.
+    pub fn canonical_perp(&self) -> Arc<RwLock<HashMap<B256, Vec<u8>>>> {
+        self.inner.canonical_perp.clone()
+    }
+
+    /// 返回 off-trie PerpDEX 存储的 [`PerpStateHandle`] 读句柄，供 EVM 冷读路径(共识 + RPC)使用。
+    pub fn canonical_perp_handle(&self) -> PerpHandle {
+        Arc::new(PerpStore(self.inner.canonical_perp.clone()))
+    }
+
+    /// Merges a block's net off-trie PerpDEX writes ("PerpState") into the canonical store.
+    ///
+    /// An empty value deletes the key. Called when a block enters the canonical chain. No-op for
+    /// an empty delta.
+    pub fn merge_perp_delta(&self, delta: &HashMap<B256, Vec<u8>>) {
+        if delta.is_empty() {
+            return;
+        }
+        let mut store = self.inner.canonical_perp.write();
+        for (key, value) in delta {
+            if value.is_empty() {
+                store.remove(key);
+            } else {
+                store.insert(*key, value.clone());
+            }
+        }
+    }
+
+    /// Replaces the entire off-trie PerpDEX store with `map`. Called ONCE at node startup to
+    /// seed `canonical_perp` from the durable `PerpState` table (state as of the persisted
+    /// head); the unpersisted tail is then rebuilt by re-executing re-fed blocks. Unlike
+    /// [`Self::merge_perp_delta`] this overwrites rather than merges.
+    pub fn seed_perp(&self, map: HashMap<B256, Vec<u8>>) {
+        *self.inner.canonical_perp.write() = map;
     }
 
     /// Returns the block hash corresponding to the given number.
@@ -979,6 +1036,60 @@ mod tests {
         AccountProof, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
         StorageProof, TrieInput,
     };
+
+    #[test]
+    fn merge_perp_delta_inserts_and_deletes() {
+        let state = CanonicalInMemoryState::<EthPrimitives>::empty();
+        let key = B256::repeat_byte(7);
+
+        // A non-empty value inserts/overwrites.
+        let mut delta = HashMap::default();
+        delta.insert(key, vec![1u8, 2, 3]);
+        state.merge_perp_delta(&delta);
+        assert_eq!(state.canonical_perp().read().get(&key), Some(&vec![1u8, 2, 3]));
+
+        // An empty value deletes the key.
+        let mut delete = HashMap::default();
+        delete.insert(key, Vec::new());
+        state.merge_perp_delta(&delete);
+        assert!(state.canonical_perp().read().get(&key).is_none());
+
+        // An empty delta is a no-op.
+        state.merge_perp_delta(&HashMap::default());
+        assert!(state.canonical_perp().read().is_empty());
+    }
+
+    #[test]
+    fn seed_perp_replaces_whole_map() {
+        let state = CanonicalInMemoryState::<EthPrimitives>::empty();
+        // pre-existing junk that seed must clear:
+        state.merge_perp_delta(&HashMap::from_iter([(B256::with_last_byte(9), vec![0xFF])]));
+
+        let mut snapshot = HashMap::default();
+        snapshot.insert(B256::with_last_byte(1), vec![0xAA]);
+        snapshot.insert(B256::with_last_byte(2), vec![0xBB]);
+        state.seed_perp(snapshot);
+
+        let store = state.canonical_perp();
+        let g = store.read();
+        assert_eq!(g.get(&B256::with_last_byte(1)), Some(&vec![0xAAu8]));
+        assert_eq!(g.get(&B256::with_last_byte(2)), Some(&vec![0xBBu8]));
+        assert!(g.get(&B256::with_last_byte(9)).is_none()); // replaced, not merged
+        assert_eq!(g.len(), 2);
+    }
+
+    #[test]
+    fn canonical_perp_handle_reads_committed_value() {
+        let state = CanonicalInMemoryState::<EthPrimitives>::empty();
+        let key = B256::with_last_byte(7);
+        let mut delta = HashMap::default();
+        delta.insert(key, vec![9u8, 9]);
+        state.merge_perp_delta(&delta);
+
+        let handle = state.canonical_perp_handle();
+        assert_eq!(handle.perp_get(key), vec![9u8, 9]);
+        assert!(handle.perp_get(B256::with_last_byte(8)).is_empty());
+    }
 
     fn create_mock_state(
         test_block_builder: &mut TestBlockBuilder<EthPrimitives>,

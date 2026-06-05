@@ -10,7 +10,10 @@ use futures::Future;
 use reth_chainspec::MIN_TRANSACTION_GAS;
 use reth_errors::ProviderError;
 use reth_evm::{ConfigureEvm, Database, Evm, EvmEnvFor, EvmFor, TransactionEnv, TxEnvFor};
-use reth_revm::{database::StateProviderDatabase, db::CacheDB};
+use reth_revm::{
+    database::{PerpDb, StateProviderDatabase},
+    db::CacheDB,
+};
 use reth_rpc_convert::{RpcConvert, RpcTxReq};
 use reth_rpc_eth_types::{
     error::{api::FromEvmHalt, FromEvmError},
@@ -78,7 +81,7 @@ pub trait EstimateCall: Call {
             .unwrap_or(max_gas_limit);
 
         // Configure the evm env
-        let mut db = CacheDB::new(StateProviderDatabase::new(state));
+        let mut db = CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), self.perp_handle()));
 
         // Apply any state overrides if specified.
         if let Some(state_override) = state_override {
@@ -91,7 +94,7 @@ pub trait EstimateCall: Call {
         let mut is_basic_transfer = false;
         if tx_env.input().is_empty() {
             if let TxKind::Call(to) = tx_env.kind() {
-                if let Ok(code) = db.db.account_code(&to) {
+                if let Ok(code) = db.db.inner().account_code(&to) {
                     is_basic_transfer = code.map(|code| code.is_empty()).unwrap_or(true);
                 }
             }

@@ -26,7 +26,7 @@ use reth_evm::{
 use reth_node_api::BlockBody;
 use reth_primitives_traits::Recovered;
 use reth_revm::{
-    database::StateProviderDatabase,
+    database::{PerpDb, StateProviderDatabase},
     db::{CacheDB, State},
 };
 use reth_rpc_convert::{RpcConvert, RpcTxReq};
@@ -95,9 +95,11 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
             let mut parent = base_block.sealed_header().clone();
 
             let this = self.clone();
+            let perp = self.perp_handle();
             self.spawn_with_state_at_block(block, move |state| {
-                let mut db =
-                    State::builder().with_database(StateProviderDatabase::new(state)).build();
+                let mut db = State::builder()
+                    .with_database(PerpDb::new(StateProviderDatabase::new(state), perp.clone()))
+                    .build();
                 let mut blocks: Vec<SimulatedBlock<RpcBlock<Self::NetworkTypes>>> =
                     Vec::with_capacity(block_state_calls.len());
                 for block in block_state_calls {
@@ -280,9 +282,10 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
             }
 
             let this = self.clone();
+            let perp = self.perp_handle();
             self.spawn_with_state_at_block(at.into(), move |state| {
                 let mut all_results = Vec::with_capacity(bundles.len());
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
+                let mut db = CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
 
                 if replay_block_txs {
                     // only need to replay the transactions in the block if not all transactions are
@@ -378,9 +381,10 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
     where
         Self: Trace,
     {
+        let perp = self.perp_handle();
         self.spawn_blocking_io_fut(move |this| async move {
             let state = this.state_at_block_id(at).await?;
-            let mut db = CacheDB::new(StateProviderDatabase::new(state));
+            let mut db = CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
 
             if let Some(state_overrides) = state_override {
                 apply_state_overrides(state_overrides, &mut db)
@@ -608,10 +612,13 @@ pub trait Call:
         async move {
             let (evm_env, at) = self.evm_env_at(at).await?;
             let this = self.clone();
+            let perp = self.perp_handle();
             self.spawn_blocking_io_fut(move |_| async move {
                 let state = this.state_at_block_id(at).await?;
-                let mut db =
-                    CacheDB::new(StateProviderDatabase::new(StateProviderTraitObjWrapper(&state)));
+                let mut db = CacheDB::new(PerpDb::new(
+                    StateProviderDatabase::new(StateProviderTraitObjWrapper(&state)),
+                    perp.clone(),
+                ));
 
                 let (evm_env, tx_env) =
                     this.prepare_call_env(evm_env, request, &mut db, overrides)?;
@@ -661,8 +668,9 @@ pub trait Call:
             let parent_block = block.parent_hash();
 
             let this = self.clone();
+            let perp = self.perp_handle();
             self.spawn_with_state_at_block(parent_block.into(), move |state| {
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
+                let mut db = CacheDB::new(PerpDb::new(StateProviderDatabase::new(state), perp.clone()));
                 let block_txs = block.transactions_recovered();
 
                 // replay all transactions prior to the targeted transaction

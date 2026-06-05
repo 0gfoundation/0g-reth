@@ -204,6 +204,14 @@ pub trait LoadState:
         RpcConvert: RpcConvert<Network = Self::NetworkTypes>,
     > + RpcNodeCoreExt
 {
+    /// call/trace 执行期 off-trie `PerpState` 冷读句柄。
+    ///
+    /// 经底层 provider 的 [`StateProviderFactory::canonical_perp`] 解析;
+    /// 无 canonical perp 存储的 provider 返回 `None`。
+    fn perp_handle(&self) -> Option<reth_storage_api::PerpHandle> {
+        self.provider().canonical_perp()
+    }
+
     /// Returns the state at the given block number
     fn state_at_hash(&self, block_hash: B256) -> Result<StateProviderBox, Self::Error> {
         self.provider().history_by_block_hash(block_hash).map_err(Self::Error::from_eth_err)

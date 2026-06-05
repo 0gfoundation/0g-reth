@@ -4,7 +4,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 use reth_errors::ProviderResult;
-use reth_revm::{database::StateProviderDatabase, DatabaseRef};
+use reth_revm::{
+    database::{PerpDb, StateProviderDatabase},
+    DatabaseRef,
+};
 use reth_storage_api::{BytecodeReader, HashedPostStateProvider, StateProvider};
 use reth_trie::{HashedStorage, MultiProofTargets};
 use revm::{
@@ -14,8 +17,12 @@ use revm::{
     Database, DatabaseCommit,
 };
 
-/// Helper alias type for the state's [`CacheDB`]
-pub type StateCacheDb<'a> = CacheDB<StateProviderDatabase<StateProviderTraitObjWrapper<'a>>>;
+/// Helper alias type for the state's [`CacheDB`].
+///
+/// Wraps the trie-backed db in [`PerpDb`] so off-trie `PerpState` cold reads resolve to the
+/// committed `canonical_perp` store on the RPC call/trace execution paths.
+pub type StateCacheDb<'a> =
+    CacheDB<PerpDb<StateProviderDatabase<StateProviderTraitObjWrapper<'a>>>>;
 
 /// Hack to get around 'higher-ranked lifetime error', see
 /// <https://github.com/rust-lang/rust/issues/100013>
@@ -207,6 +214,13 @@ impl<'a> Database for StateCacheDbRefMutWrapper<'a, '_> {
     fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         self.0.block_hash(number)
     }
+
+    /// Forward off-trie `PerpState` cold reads to the inner [`PerpDb`]. Without this, the EVM
+    /// would see an empty orderbook through this wrapper on the `eth_call` / `spawn_with_call_at`
+    /// execution path, since the `Database::perp_storage` default returns an empty `Vec`.
+    fn perp_storage(&mut self, key: B256) -> Result<Vec<u8>, Self::Error> {
+        self.0.perp_storage(key)
+    }
 }
 
 impl<'a> DatabaseRef for StateCacheDbRefMutWrapper<'a, '_> {
@@ -226,6 +240,11 @@ impl<'a> DatabaseRef for StateCacheDbRefMutWrapper<'a, '_> {
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         self.0.block_hash_ref(number)
+    }
+
+    /// Forward off-trie `PerpState` cold reads to the inner [`PerpDb`] (see [`Database::perp_storage`]).
+    fn perp_storage_ref(&self, key: B256) -> Result<Vec<u8>, Self::Error> {
+        self.0.perp_storage_ref(key)
     }
 }
 

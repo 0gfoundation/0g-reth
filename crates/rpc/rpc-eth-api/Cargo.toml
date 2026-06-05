@@ -20,7 +20,8 @@ reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 reth-errors.workspace = true
 reth-evm.workspace = true
 reth-storage-api.workspace = true
-reth-revm.workspace = true
+# std 启用 `PerpDb`(off-trie PerpState 冷读 wrapper)。
+reth-revm = { workspace = true, features = ["std"] }
 reth-rpc-convert.workspace = true
 reth-tasks = { workspace = true, features = ["rayon"] }
 reth-transaction-pool.workspace = true

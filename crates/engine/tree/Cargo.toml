@@ -27,7 +27,8 @@ reth-primitives-traits.workspace = true
 reth-ethereum-primitives.workspace = true
 reth-provider.workspace = true
 reth-prune.workspace = true
-reth-revm.workspace = true
+# `std` enables `PerpDb` (off-trie PerpState cold-read wrapper); engine-tree is std-only.
+reth-revm = { workspace = true, features = ["std"] }
 reth-stages-api.workspace = true
 reth-tasks.workspace = true
 reth-trie-db.workspace = true

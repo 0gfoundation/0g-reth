@@ -3080,6 +3080,40 @@ impl<TX: DbTxMut, N: NodeTypes> ChainStateBlockWriter for DatabaseProvider<TX, N
     }
 }
 
+impl<TX: DbTx + 'static, N: NodeTypes> DatabaseProvider<TX, N> {
+    /// Reads the entire off-trie `PerpState` table into a map (materialized perp state as of
+    /// the persisted head). Used at startup to seed the in-memory `canonical_perp`.
+    pub fn read_all_perp_state(
+        &self,
+    ) -> ProviderResult<alloy_primitives::map::HashMap<B256, Vec<u8>>> {
+        let mut map = alloy_primitives::map::HashMap::default();
+        for entry in self.tx.cursor_read::<tables::PerpState>()?.walk(None)? {
+            let (key, value) = entry?;
+            map.insert(key, value);
+        }
+        Ok(map)
+    }
+}
+
+impl<TX: DbTxMut + DbTx + 'static, N: NodeTypes> DatabaseProvider<TX, N> {
+    /// Applies one block's net off-trie PerpDEX delta to the durable `PerpState` table:
+    /// empty value = delete the key, otherwise upsert. Runs in the caller's RW transaction so
+    /// it commits atomically with the block state.
+    pub fn write_perp_state_delta(
+        &self,
+        delta: &alloy_primitives::map::HashMap<B256, Vec<u8>>,
+    ) -> ProviderResult<()> {
+        for (key, value) in delta {
+            if value.is_empty() {
+                self.tx.delete::<tables::PerpState>(*key, None)?;
+            } else {
+                self.tx.put::<tables::PerpState>(*key, value.clone())?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<TX: DbTx + 'static, N: NodeTypes + 'static> DBProvider for DatabaseProvider<TX, N> {
     type Tx = TX;
 
@@ -3108,6 +3142,39 @@ mod tests {
         BlockWriter,
     };
     use reth_testing_utils::generators::{self, random_block, BlockParams};
+
+    #[test]
+    fn perp_state_round_trips_through_db() {
+        use alloy_primitives::{map::HashMap, B256};
+
+        let factory = create_test_provider_factory();
+
+        // write a delta: insert two keys, then a delete marker (empty value) on a third.
+        let k1 = B256::with_last_byte(1);
+        let k2 = B256::with_last_byte(2);
+        let k3 = B256::with_last_byte(3);
+        let mut delta: HashMap<B256, Vec<u8>> = HashMap::default();
+        delta.insert(k1, vec![0xAA, 0xBB]);
+        delta.insert(k2, vec![0xCC]);
+
+        let provider_rw = factory.provider_rw().unwrap();
+        provider_rw.write_perp_state_delta(&delta).unwrap();
+        provider_rw.commit().unwrap();
+
+        // delete k1 via empty-value delta, in a second commit.
+        let mut del: HashMap<B256, Vec<u8>> = HashMap::default();
+        del.insert(k1, Vec::new());
+        let provider_rw = factory.provider_rw().unwrap();
+        provider_rw.write_perp_state_delta(&del).unwrap();
+        provider_rw.commit().unwrap();
+
+        // read back the materialized state.
+        let got = factory.provider().unwrap().read_all_perp_state().unwrap();
+        assert_eq!(got.get(&k2), Some(&vec![0xCCu8]));
+        assert_eq!(got.get(&k1), None); // deleted
+        assert_eq!(got.get(&k3), None); // never written
+        assert_eq!(got.len(), 1);
+    }
 
     #[test]
     fn test_receipts_by_block_range_empty_range() {
