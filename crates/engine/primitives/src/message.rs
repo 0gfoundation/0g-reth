@@ -219,6 +219,12 @@ impl ExecutionPayload for BigBlockData<ExecutionData> {
         self.env_switches[0].withdrawals()
     }
 
+    // reth-v2.8.1 migration: 6a4f950b1 added `slashed` to `ExecutionPayload`; this upstream impl
+    // did not exist then. It reads the first segment, like `withdrawals` above.
+    fn slashed(&self) -> Option<&[Withdrawal]> {
+        self.env_switches[0].slashed()
+    }
+
     fn block_access_list(&self) -> Option<&Bytes> {
         self.merged_block_access_list.as_ref()
     }

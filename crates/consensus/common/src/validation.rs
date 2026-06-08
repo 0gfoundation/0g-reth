@@ -603,10 +603,13 @@ mod tests {
             excess_blob_gas: Some(0),
             ..Default::default()
         };
+        // reth-v2.8.1 migration: upstream added this test; 0G's alloy fork gives `BlockBody` a
+        // `slashed` field (6a4f950b1), so the literal sets it to `None`.
         let body = BlockBody {
             transactions: vec![transaction],
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
+            slashed: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
@@ -633,10 +636,12 @@ mod tests {
             excess_blob_gas: Some(0),
             ..Default::default()
         };
+        // reth-v2.8.1 migration: same as `precomputed_tx_root_correct_passes`.
         let body = BlockBody {
             transactions: vec![transaction],
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
+            slashed: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });

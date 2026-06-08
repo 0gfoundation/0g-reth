@@ -326,10 +326,13 @@ async fn run_pipeline_forward_and_unwind(
         let block_with_senders = RecoveredBlock::new_unhashed(
             Block::new(
                 temp_header,
+                // reth-v2.8.1 migration: upstream test; 0G's alloy fork gives `BlockBody` a
+                // `slashed` field (6a4f950b1), set to `None` here.
                 BlockBody {
                     transactions: transactions.clone(),
                     ommers: Vec::new(),
                     withdrawals: None,
+                    slashed: None,
                 },
             ),
             vec![signer_address, signer_address], // Both txs from same sender
@@ -376,9 +379,10 @@ async fn run_pipeline_forward_and_unwind(
             ..Default::default()
         };
 
+        // reth-v2.8.1 migration: same `slashed: None` as the body above.
         let block: SealedBlock<Block> = SealedBlock::seal_parts(
             header,
-            BlockBody { transactions, ommers: Vec::new(), withdrawals: None },
+            BlockBody { transactions, ommers: Vec::new(), withdrawals: None, slashed: None },
         );
 
         // Write the plain state to database so subsequent blocks build on it

@@ -691,59 +691,60 @@ revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = 
 revm-handler = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-handler" }
 revm-precompile = { git = "https://github.com/0gfoundation/revm", rev = "35a40c6d38a2660061d2ae45c0ddea8a4e7fda20", package = "revm-precompile" }
 
-# reth-v2.8.1 migration: the original pinned alloy-evm `8b7799f7` (merge PR #9, same tree as
-# `c3b6832e` "feat: spec add staking activation time"), replayed as `5fdc3821`.
-alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "5fdc38216e6de230259717b74f51a08b860e310b" }
+# reth-v2.8.1 migration: the original pinned alloy-evm `1798948c` ("feat: process double sign
+# slashings"), replayed as `5b46d25f`.
+alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "5b46d25f12a0a67d5617de8513ae49f02fa3d953" }
 
 # Patch alloy 1.0.35 with 0g-alloy
-# reth-v2.8.1 migration: the original pinned 0g-alloy `rev = 54d1e2d3` (merge PR #2, same tree as
-# the `0f605806` that `branch = "mainnet-staking"` resolved to before), replayed as `9566607b`,
+# reth-v2.8.1 migration: the original pinned 0g-alloy `rev = 99e5aa44` (same tree as `ec105853`
+# "bugfix: use DefaultOnNull"), replayed as `6a996f51`,
 # with `package = ...` on every entry plus `features` on `alloy-provider`, `alloy-rpc-types` and
 # `alloy-transport-http`. The same form is used for all 31 crates reth v2.8.1 resolves (the
 # original's 27 plus `alloy-consensus-any`, `alloy-node-bindings`, `alloy-rpc-types-any` and
 # `alloy-tx-macros`).
-alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-consensus" }
-alloy-consensus-any = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-consensus-any" }
-alloy-contract = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-contract" }
-alloy-eips = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-eips" }
-alloy-genesis = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-genesis" }
-alloy-json-rpc = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-json-rpc" }
-alloy-network = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-network" }
-alloy-network-primitives = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-network-primitives" }
-alloy-node-bindings = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-node-bindings" }
-alloy-provider = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-provider", features = ["reqwest"] }
-alloy-pubsub = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-pubsub" }
-alloy-rpc-client = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-client" }
-alloy-rpc-types ={ git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types", features = ["eth"] }
-alloy-rpc-types-admin = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-admin" }
-alloy-rpc-types-anvil = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-anvil" }
-alloy-rpc-types-any = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-any" }
-alloy-rpc-types-beacon = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-beacon" }
-alloy-rpc-types-debug = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-debug" }
-alloy-rpc-types-engine = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-engine" }
-alloy-rpc-types-eth = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-eth" }
-alloy-rpc-types-mev = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-mev" }
-alloy-rpc-types-trace = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-trace" }
-alloy-rpc-types-txpool = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-rpc-types-txpool" }
-alloy-serde = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-serde" }
-alloy-signer = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-signer" }
-alloy-signer-local = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-signer-local" }
-alloy-transport = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-transport" }
-alloy-transport-http = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-transport-http", features = ["reqwest-rustls-tls"] }
-alloy-transport-ipc = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-transport-ipc" }
-alloy-transport-ws = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-transport-ws" }
-alloy-tx-macros = { git = "https://github.com/0gfoundation/0g-alloy", rev = "9566607b9c28d467df1faf2659da374dba7424c8", package = "alloy-tx-macros" }
+alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-consensus" }
+alloy-consensus-any = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-consensus-any" }
+alloy-contract = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-contract" }
+alloy-eips = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-eips" }
+alloy-genesis = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-genesis" }
+alloy-json-rpc = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-json-rpc" }
+alloy-network = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-network" }
+alloy-network-primitives = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-network-primitives" }
+alloy-node-bindings = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-node-bindings" }
+alloy-provider = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-provider", features = ["reqwest"] }
+alloy-pubsub = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-pubsub" }
+alloy-rpc-client = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-client" }
+alloy-rpc-types ={ git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types", features = ["eth"] }
+alloy-rpc-types-admin = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-admin" }
+alloy-rpc-types-anvil = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-anvil" }
+alloy-rpc-types-any = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-any" }
+alloy-rpc-types-beacon = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-beacon" }
+alloy-rpc-types-debug = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-debug" }
+alloy-rpc-types-engine = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-engine" }
+alloy-rpc-types-eth = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-eth" }
+alloy-rpc-types-mev = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-mev" }
+alloy-rpc-types-trace = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-trace" }
+alloy-rpc-types-txpool = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-rpc-types-txpool" }
+alloy-serde = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-serde" }
+alloy-signer = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-signer" }
+alloy-signer-local = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-signer-local" }
+alloy-transport = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-transport" }
+alloy-transport-http = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-transport-http", features = ["reqwest-rustls-tls"] }
+alloy-transport-ipc = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-transport-ipc" }
+alloy-transport-ws = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-transport-ws" }
+alloy-tx-macros = { git = "https://github.com/0gfoundation/0g-alloy", rev = "6a996f51802e7c598161c3bc40dcea4a93a427ba", package = "alloy-tx-macros" }
 
 # reth-v2.8.1 migration: the original changed `crates/primitives-traits` in this repository
 # (87f2d4574: `BlockHeader` gains the `BlockHeaderMut` supertrait; 88e95db1c: `SealedHeader`'s
-# test-utils `set_state_root` calls `TestHeader::set_state_root` explicitly). reth v2.8.1 takes
-# that crate from reth-core; the changes are replayed there as `354d5434` and `3fb34141`, so the
-# 5 reth-core crates reth v2.8.1 resolves are patched to the latter.
-reth-codecs = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
-reth-codecs-derive = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
-reth-primitives-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
-reth-rpc-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
-reth-zstd-compressors = { git = "https://github.com/0gfoundation/reth-core", rev = "3fb341412ffcec12ef70d1eefe657fe5c83a588e" }
+# test-utils `set_state_root` calls `TestHeader::set_state_root` explicitly; 6a4f950b1: block body
+# `slashed`). reth v2.8.1 takes that crate from reth-core; the changes are replayed there as
+# `354d5434`, `3fb34141` and `47c07322`, so the 5 reth-core crates reth v2.8.1 resolves are patched
+# to the latest.
+reth-codecs = { git = "https://github.com/0gfoundation/reth-core", rev = "47c073229a4774e23ebba26f7f82b7e1855d6b47" }
+reth-codecs-derive = { git = "https://github.com/0gfoundation/reth-core", rev = "47c073229a4774e23ebba26f7f82b7e1855d6b47" }
+reth-primitives-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "47c073229a4774e23ebba26f7f82b7e1855d6b47" }
+reth-rpc-traits = { git = "https://github.com/0gfoundation/reth-core", rev = "47c073229a4774e23ebba26f7f82b7e1855d6b47" }
+reth-zstd-compressors = { git = "https://github.com/0gfoundation/reth-core", rev = "47c073229a4774e23ebba26f7f82b7e1855d6b47" }
 
 # revm = { path = "../revm/crates/revm" }
 # revm-bytecode = { path = "../revm/crates/bytecode" }

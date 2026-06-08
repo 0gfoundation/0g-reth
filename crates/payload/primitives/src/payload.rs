@@ -45,6 +45,11 @@ pub trait ExecutionPayload:
     /// Returns `None` for pre-Amsterdam blocks.
     fn block_access_list(&self) -> Option<&Bytes>;
 
+    /// Returns slashed validator entries included in this payload.
+    ///
+    /// Returns `None` for pre-V3 blocks.
+    fn slashed(&self) -> Option<&[Withdrawal]>;
+
     /// Returns the beacon block root associated with this payload.
     ///
     /// Returns `None` for pre-merge payloads.
@@ -86,6 +91,10 @@ impl ExecutionPayload for ExecutionData {
 
     fn block_access_list(&self) -> Option<&Bytes> {
         self.payload.block_access_list()
+    }
+
+    fn slashed(&self) -> Option<&[Withdrawal]> {
+        self.payload.slashed()
     }
 
     fn parent_beacon_block_root(&self) -> Option<B256> {
@@ -147,6 +156,14 @@ where
         match self {
             Self::ExecutionPayload(payload) => payload.withdrawals(),
             Self::PayloadAttributes(attributes) => attributes.withdrawals(),
+        }
+    }
+
+    /// Returns slashed validator entries from the payload, if present.
+    pub fn slashed(&self) -> Option<&[Withdrawal]> {
+        match self {
+            Self::ExecutionPayload(payload) => payload.slashed(),
+            Self::PayloadAttributes(_) => None,
         }
     }
 

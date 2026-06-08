@@ -2297,6 +2297,9 @@ mod tests {
                     },
                     blob_gas_used: 0,
                     excess_blob_gas: 0,
+                    // reth-v2.8.1 migration: upstream test fixture; 0G's alloy fork adds
+                    // `slashed` to `ExecutionPayloadV3` (e27cd031, pinned by 6a4f950b1).
+                    slashed: Vec::new(),
                 },
                 block_access_list: Bytes::from_static(b"bal"),
                 slot_number: 1,

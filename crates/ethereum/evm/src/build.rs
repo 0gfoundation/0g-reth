@@ -137,9 +137,17 @@ impl<ChainSpec: EthChainSpec + EthereumHardforks> EthBlockAssembler<ChainSpec> {
             slot_number: ctx.slot_number,
         };
 
+        // reth-v2.8.1 migration: 6a4f950b1 added `slashed: None` to the body built in the
+        // `BlockAssembler::assemble_block` impl; upstream moved that body into this inherent
+        // `assemble_block`, which the trait impl now calls.
         Ok(Block {
             header,
-            body: BlockBody { transactions, ommers: Default::default(), withdrawals },
+            body: BlockBody {
+                transactions,
+                ommers: Default::default(),
+                withdrawals,
+                slashed: None,
+            },
         })
     }
 }

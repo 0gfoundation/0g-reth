@@ -1323,6 +1323,9 @@ mod tests {
             // reth-v2.8.1 migration: upstream test fixture; 481897eba's alloy-evm adds
             // `timestamp`, set to the block env's timestamp (the default 0 in `evm_env`).
             timestamp: 0,
+            // reth-v2.8.1 migration: 6a4f950b1's alloy-evm adds `slashed`; this fixture has
+            // none.
+            slashed: None,
             extra_data: Bytes::new(),
             tx_count_hint: None,
             slot_number: None,
