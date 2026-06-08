@@ -650,7 +650,7 @@ mod tests {
     #[test]
     fn test_block_body_conversion() {
         let block_body: BlockBody<Bytes> =
-            BlockBody { transactions: vec![], ommers: vec![], withdrawals: None };
+            BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None };
 
         let compressed_body = CompressedBody::from_body(&block_body).unwrap();
 
@@ -718,7 +718,7 @@ mod tests {
 
         let withdrawals = Some(Withdrawals(vec![]));
 
-        let block_body = BlockBody { transactions, ommers: vec![], withdrawals };
+        let block_body = BlockBody { transactions, ommers: vec![], withdrawals, slashed: None };
 
         let block = Block::new(header, block_body);
 
