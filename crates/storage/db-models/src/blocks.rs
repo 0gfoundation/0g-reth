@@ -77,6 +77,17 @@ pub struct StoredBlockWithdrawals {
     pub withdrawals: Withdrawals,
 }
 
+/// The storage representation of slashed validator entries.
+#[derive(Debug, Default, Eq, PartialEq, Clone)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StoredBlockSlashed {
+    /// Slashed validator entries for the block.
+    pub slashed: Withdrawals,
+}
+
 /// A storage representation of block withdrawals that is static file friendly. An inner `None`
 /// represents a pre-merge block.
 #[derive(Debug, Default, Eq, PartialEq, Clone)]

@@ -40,6 +40,11 @@ pub trait ExecutionPayload:
     /// Returns `None` for pre-Shanghai blocks.
     fn withdrawals(&self) -> Option<&Vec<Withdrawal>>;
 
+    /// Returns slashed validator entries included in this payload.
+    ///
+    /// Returns `None` for pre-V3 blocks.
+    fn slashed(&self) -> Option<&[Withdrawal]>;
+
     /// Returns the beacon block root associated with this payload.
     ///
     /// Returns `None` for pre-merge payloads.
@@ -67,6 +72,10 @@ impl ExecutionPayload for ExecutionData {
 
     fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
         self.payload.withdrawals()
+    }
+
+    fn slashed(&self) -> Option<&[Withdrawal]> {
+        self.payload.slashed()
     }
 
     fn parent_beacon_block_root(&self) -> Option<B256> {
@@ -116,6 +125,14 @@ where
         match self {
             Self::ExecutionPayload(payload) => payload.withdrawals(),
             Self::PayloadAttributes(attributes) => attributes.withdrawals(),
+        }
+    }
+
+    /// Returns slashed validator entries from the payload, if present.
+    pub fn slashed(&self) -> Option<&[Withdrawal]> {
+        match self {
+            Self::ExecutionPayload(payload) => payload.slashed(),
+            Self::PayloadAttributes(_) => None,
         }
     }
 
@@ -170,6 +187,10 @@ impl ExecutionPayload for op_alloy_rpc_types_engine::OpExecutionData {
 
     fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
         self.payload.as_v2().map(|p| &p.withdrawals)
+    }
+
+    fn slashed(&self) -> Option<&[Withdrawal]> {
+        self.payload.as_v3().map(|p| p.slashed())
     }
 
     fn parent_beacon_block_root(&self) -> Option<B256> {
