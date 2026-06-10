@@ -296,7 +296,7 @@ where
     ) -> EthBlockExecutionCtx<'_> {
         // 0G: decode the SSZ `BridgeRequests` blob the CL forwarded via
         // `engine_forkchoiceUpdatedV4.payloadAttributes.bridgeRequests` and re-encode it as
-        // ABI calldata for `Bridge.executeRemoteMessages(InboundMessage[])`. Fork-activation
+        // ABI calldata for `Bridge.parkRemoteMessages(InboundMessage[])`. Fork-activation
         // and bridge-address gating happen inside
         // `system_calls::bridge::transact_bridge_contract_call`; if either is closed, the
         // calldata is computed but never executed (still cheap — a few KB encode).
@@ -315,7 +315,7 @@ where
             match reth_0g_bridge::decode_bridge_messages(raw) {
                 Ok(msgs) => {
                     let chain_id = self.chain_spec().chain().id();
-                    let cd = reth_0g_bridge::encode_execute_remote_messages_calldata(
+                    let cd = reth_0g_bridge::encode_park_remote_messages_calldata(
                         &msgs,
                         chain_id,
                         fee_recipient,
@@ -432,7 +432,7 @@ where
 
     fn context_for_payload<'a>(&self, payload: &'a ExecutionData) -> ExecutionCtxFor<'a, Self> {
         // 0G bridge: extract the EIP-7685 type-`0xf0` entry, if any, and produce ABI calldata
-        // for `Bridge.executeRemoteMessages`. We do NOT enforce fork-activation here — the
+        // for `Bridge.parkRemoteMessages`. We do NOT enforce fork-activation here — the
         // actual gating happens inside `system_calls::bridge::transact_bridge_contract_call`,
         // which checks `is_bridge_active_at_timestamp` and `bridge_contract_address`.
         // Decoding errors from CL-emitted bytes degrade to `None` (no system call); a
@@ -457,7 +457,7 @@ where
             .and_then(|raw| match reth_0g_bridge::decode_bridge_messages(raw) {
                 Ok(msgs) => {
                     let chain_id = self.chain_spec().chain().id();
-                    let cd = reth_0g_bridge::encode_execute_remote_messages_calldata(
+                    let cd = reth_0g_bridge::encode_park_remote_messages_calldata(
                         &msgs,
                         chain_id,
                         fee_recipient,

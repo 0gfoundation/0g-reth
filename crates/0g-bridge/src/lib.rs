@@ -4,7 +4,7 @@
 //! (private 0G namespace, allocated to avoid colliding with future Ethereum upstream request
 //! types). The CL emits a list of [`BridgeMessage`] items as SSZ bytes; this crate decodes
 //! them and re-encodes the subset that the destination-chain Bridge contract consumes as ABI
-//! calldata for `Bridge.executeRemoteMessages(InboundMessage[])`.
+//! calldata for `Bridge.parkRemoteMessages(InboundMessage[])`.
 //!
 //! Field definitions, byte order, and length caps are pinned across the CL/EL/contract
 //! stack; see [`BridgeMessage`] and [`MAX_BRIDGE_MESSAGES_PER_BLOCK`].
@@ -27,7 +27,7 @@ pub mod encode;
 pub use decode::{
     decode_bridge_messages, decode_bridge_request, BridgeDecodeError, BridgeMessage, BridgeRequests,
 };
-pub use encode::{encode_execute_remote_messages_calldata, InboundMessage};
+pub use encode::{encode_park_remote_messages_calldata, InboundMessage};
 
 /// EIP-7685 request type byte for 0G bridge inbound messages.
 ///
@@ -43,11 +43,13 @@ pub const BRIDGE_REQUEST_TYPE: u8 = 0xf0;
 /// at the byte level — a longer list aborts payload validation rather than silently
 /// truncating, see [`BridgeDecodeError::TooManyMessages`].
 ///
-/// Consensus parameter: MUST equal the CL `constants.MaxBridgeMessagesPerBlock`. Sized so the
-/// destination `executeRemoteMessages` system call (30M gas, per-message capped at
-/// PER_MESSAGE_GAS_CAP=400k in the Bridge contract) can never exhaust gas and revert the whole
-/// batch even if every message fails delivery (48 × ~540k ≈ 26.4M < 30M).
-pub const MAX_BRIDGE_MESSAGES_PER_BLOCK: usize = 48;
+/// Consensus parameter: MUST equal the CL `constants.MaxBridgeMessagesPerBlock` and the value
+/// exercised by the Bridge contract's all-park gas test. Sized for the park-only system call:
+/// `parkRemoteMessages` does no token delivery — it only writes each message into contract
+/// storage for later permissionless delivery — costing ~144k gas per message in the worst
+/// (all-park) case. 128 × ~144k ≈ 18.4M, which fits the sizing rule of ≤ 65% of the 30M
+/// system-call gas limit, leaving headroom for ABI decoding and dispatch overhead.
+pub const MAX_BRIDGE_MESSAGES_PER_BLOCK: usize = 128;
 
 /// Bridge transfer modes mirrored from the Solidity enum. Values must stay byte-identical
 /// across CL Go, EL Rust, and Solidity — `LockRelease = 0`, `MintBurn = 1`.

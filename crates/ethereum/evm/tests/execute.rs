@@ -1012,7 +1012,7 @@ mod bridge_tests {
     fn bridge_calldata_is_passed_through_verbatim() {
         // Build real ABI calldata via the bridge crate and verify the stub sees the same
         // selector + payload.
-        use reth_0g_bridge::{encode_execute_remote_messages_calldata, BridgeMessage};
+        use reth_0g_bridge::{encode_park_remote_messages_calldata, BridgeMessage};
 
         let spec = build_chain_spec(true);
         let local_chain_id = spec.chain.id();
@@ -1027,7 +1027,7 @@ mod bridge_tests {
             src_block: 7,
         };
         let fee_recipient = address!("0x00000000000000000000000000000000000000Fe");
-        let cd = encode_execute_remote_messages_calldata(&[msg], local_chain_id, fee_recipient);
+        let cd = encode_park_remote_messages_calldata(&[msg], local_chain_id, fee_recipient);
         let expected_first_word = U256::from_be_bytes::<32>(
             // ABI calldata starts with 4-byte selector + zero-padded args. The first 32
             // bytes are the 4-byte selector left-aligned, padded with the head of the
@@ -1189,7 +1189,7 @@ mod bridge_tests {
     fn bridge_call_uses_attributes_suggested_fee_recipient_in_build_path() {
         use alloy_primitives::FixedBytes;
         use alloy_sol_types::SolCall;
-        use reth_0g_bridge::{encode::executeRemoteMessagesCall, BridgeMessage, BridgeRequests};
+        use reth_0g_bridge::{encode::parkRemoteMessagesCall, BridgeMessage, BridgeRequests};
         use reth_evm::NextBlockEnvAttributes;
         use reth_primitives_traits::SealedHeader;
         use ssz::Encode;
@@ -1231,7 +1231,7 @@ mod bridge_tests {
         let ctx = provider.context_for_next_block(&parent, attrs);
         let cd = ctx.bridge_request.as_deref().expect("build path produces calldata");
 
-        let decoded = executeRemoteMessagesCall::abi_decode(cd.as_ref()).expect("calldata decodes");
+        let decoded = parkRemoteMessagesCall::abi_decode(cd.as_ref()).expect("calldata decodes");
         assert_eq!(decoded.msgs.len(), 1, "one InboundMessage");
         assert_eq!(
             decoded.msgs[0].feeRecipient, SUGGESTED,
@@ -1255,7 +1255,7 @@ mod bridge_tests {
         };
         use alloy_sol_types::SolCall;
         use reth_0g_bridge::{
-            encode::executeRemoteMessagesCall, BridgeMessage, BridgeRequests, BRIDGE_REQUEST_TYPE,
+            encode::parkRemoteMessagesCall, BridgeMessage, BridgeRequests, BRIDGE_REQUEST_TYPE,
         };
         use reth_ethereum_primitives::{Block, BlockBody};
         use reth_evm::ConfigureEngineEvm;
@@ -1323,7 +1323,7 @@ mod bridge_tests {
 
         // Build calldata directly with the same fee-recipient — what the proposer's
         // `context_for_next_block` produces given matching attrs.
-        let cd_build = reth_0g_bridge::encode_execute_remote_messages_calldata(
+        let cd_build = reth_0g_bridge::encode_park_remote_messages_calldata(
             &[msg],
             local_chain_id,
             PROPOSER_X,
@@ -1337,7 +1337,7 @@ mod bridge_tests {
              any drift would break dest-chain block-hash consistency"
         );
 
-        let decoded = executeRemoteMessagesCall::abi_decode(cd_verify.as_ref()).expect("decode");
+        let decoded = parkRemoteMessagesCall::abi_decode(cd_verify.as_ref()).expect("decode");
         assert_eq!(decoded.msgs.len(), 1);
         assert_eq!(decoded.msgs[0].feeRecipient, PROPOSER_X);
     }

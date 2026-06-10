@@ -169,7 +169,7 @@ where
                 withdrawals: Some(attributes.withdrawals().clone()),
                 // 0G: forward the SSZ blob the CL sent on `engine_forkchoiceUpdatedV4`. The
                 // EL config's `context_for_next_block` decodes this into ABI calldata for
-                // `Bridge.executeRemoteMessages` so the bridge system call fires inside
+                // `Bridge.parkRemoteMessages` so the bridge system call fires inside
                 // `EthBlockExecutor::finish()` during local block building.
                 bridge_request: attributes.bridge_requests.clone(),
             },

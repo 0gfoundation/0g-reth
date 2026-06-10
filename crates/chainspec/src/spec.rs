@@ -338,7 +338,7 @@ pub struct ChainSpec {
     pub staking_activation_time: u64,
 
     /// Unix timestamp at which the 0G bridge fork activates (`bridgeForkTime` in genesis JSON).
-    /// `0` means "never active". A non-zero value gates `executeRemoteMessages` system calls
+    /// `0` means "never active". A non-zero value gates `parkRemoteMessages` system calls
     /// and also flips `bridge_contract_address()` from `None` to `Some(BRIDGE_PROXY_ADDRESS)`.
     pub bridge_activation_time: u64,
 }
