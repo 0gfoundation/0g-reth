@@ -30,6 +30,11 @@ pub enum BridgeAttributesError {
     /// the SSZ list is empty: CL emits a 4-byte empty-list sentinel).
     #[error("bridgeRequests is required on engine_forkchoiceUpdatedV4 post-Bridge fork")]
     MissingBridgeRequests,
+    /// V4 `bridgeRequests` blob failed SSZ decode or violated a post-decode invariant
+    /// (per-block message cap, mode byte). The inner [`reth_0g_bridge::BridgeDecodeError`]
+    /// carries the specific reason.
+    #[error("bridgeRequests failed validation: {0}")]
+    InvalidBridgeRequests(#[from] reth_0g_bridge::BridgeDecodeError),
 }
 
 /// Errors returned when validating the post-Bridge `0xf0` request entry on
@@ -186,7 +191,8 @@ where
         //
         //   * V3 + Bridge active at this timestamp → reject (CL must use V4 post-fork)
         //   * V4 + Bridge inactive                → reject (V4 only valid post-fork)
-        //   * V4 + Bridge active                  → require non-nil `bridgeRequests`
+        //   * V4 + Bridge active                  → require non-nil `bridgeRequests` that decodes
+        //     (SSZ + cap + mode-byte checks)
         //   * V1/V2/V3 with `bridgeRequests` set  → reject (field is V4-only)
         let bridge_active =
             self.chain_spec().is_bridge_active_at_timestamp(attributes.inner.timestamp);
@@ -207,10 +213,25 @@ where
                 if !bridge_active {
                     return Err(EngineObjectValidationError::UnsupportedFork);
                 }
-                if attributes.bridge_requests.is_none() {
-                    return Err(EngineObjectValidationError::invalid_params(
-                        BridgeAttributesError::MissingBridgeRequests,
-                    ));
+                match &attributes.bridge_requests {
+                    None => {
+                        return Err(EngineObjectValidationError::invalid_params(
+                            BridgeAttributesError::MissingBridgeRequests,
+                        ));
+                    }
+                    Some(blob) => {
+                        // Decode + cap-validate the SSZ blob at FCU time. The payload builder
+                        // decodes the same blob later but degrades decode failures to "skip the
+                        // bridge system call" so block production can still make progress —
+                        // rejecting here instead surfaces a malformed or over-cap blob to the
+                        // CL as an immediate InvalidParams response rather than a silently
+                        // bridge-less block.
+                        reth_0g_bridge::decode_bridge_messages(blob).map_err(|e| {
+                            EngineObjectValidationError::invalid_params(
+                                BridgeAttributesError::InvalidBridgeRequests(e),
+                            )
+                        })?;
+                    }
                 }
             }
             EngineApiMessageVersion::V5 => {
@@ -318,8 +339,50 @@ mod tests {
     #[test]
     fn v4_with_bridge_active_and_bytes_passes() {
         let spec = spec_with_bridge(1);
-        let attrs = well_formed_attrs(100, Some(Bytes::from_static(&[0, 0, 0, 0])));
+        // Empty-list SSZ sentinel (4-byte LE offset = 4) — what the CL emits for a block with
+        // no bridge messages. Must decode cleanly and pass.
+        let attrs = well_formed_attrs(100, Some(Bytes::from_static(&[0x04, 0x00, 0x00, 0x00])));
         validate(spec, EngineApiMessageVersion::V4, &attrs).expect("V4 happy path");
+    }
+
+    /// V4 + active fork + `bridgeRequests` blob that fails SSZ decode (truncated offset
+    /// prefix) → InvalidParams at FCU time, instead of the payload builder later degrading
+    /// the decode failure into a silently bridge-less block.
+    #[test]
+    fn v4_with_malformed_bridge_requests_is_invalid_params() {
+        let spec = spec_with_bridge(1);
+        let attrs = well_formed_attrs(100, Some(Bytes::from_static(&[0xff, 0xff])));
+        let err = validate(spec, EngineApiMessageVersion::V4, &attrs).unwrap_err();
+        assert!(matches!(err, EngineObjectValidationError::InvalidParams(_)), "got {err:?}");
+    }
+
+    /// V4 + active fork + structurally valid SSZ blob carrying one message more than the
+    /// per-block cap → InvalidParams (the cap is a consensus parameter; an over-cap blob is a
+    /// CL bug and must reject, not build).
+    #[test]
+    fn v4_with_over_cap_bridge_requests_is_invalid_params() {
+        let spec = spec_with_bridge(1);
+
+        // Hand-built BridgeRequests SSZ container: 4-byte LE offset prefix (= 4) followed by
+        // N fixed-size 105-byte BridgeMessage bodies (layout locked by the byte-level fixture
+        // test in the 0g-bridge crate).
+        let n = reth_0g_bridge::MAX_BRIDGE_MESSAGES_PER_BLOCK + 1;
+        let mut blob: Vec<u8> = vec![0x04, 0x00, 0x00, 0x00];
+        for nonce in 0..n as u64 {
+            blob.extend_from_slice(&16700u64.to_le_bytes()); // src_chain_id
+            blob.extend_from_slice(&16702u64.to_le_bytes()); // dst_chain_id
+            blob.extend_from_slice(&nonce.to_le_bytes()); // nonce
+            blob.extend_from_slice(&[0x01; 20]); // local_token
+            blob.extend_from_slice(&[0x02; 20]); // recipient
+            blob.extend_from_slice(&[0; 32]); // amount (BE-zero)
+            blob.push(0x00); // mode = LockRelease
+            blob.extend_from_slice(&0u64.to_le_bytes()); // src_block
+        }
+        assert_eq!(blob.len(), 4 + n * 105, "fixture builder mismatch");
+
+        let attrs = well_formed_attrs(100, Some(Bytes::from(blob)));
+        let err = validate(spec, EngineApiMessageVersion::V4, &attrs).unwrap_err();
+        assert!(matches!(err, EngineObjectValidationError::InvalidParams(_)), "got {err:?}");
     }
 
     #[test]
