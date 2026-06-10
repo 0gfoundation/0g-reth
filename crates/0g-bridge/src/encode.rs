@@ -160,7 +160,11 @@ mod tests {
     fn calldata_starts_with_execute_remote_messages_selector() {
         let m = msg_for(1, 16700, 1);
         let cd = encode_execute_remote_messages_calldata(&[m], 16700, FEE_RECIPIENT);
-        let expected_selector = executeRemoteMessagesCall::SELECTOR;
+        // Hardcoded keccak256("executeRemoteMessages((uint64,uint64,address,address,uint256,
+        // address)[])")[..4] rather than `executeRemoteMessagesCall::SELECTOR` — comparing
+        // against the macro's own output would let a typo in the `sol!` signature
+        // self-consistently pass.
+        let expected_selector = [0xad, 0xdd, 0xec, 0x37];
         assert_eq!(&cd[..4], &expected_selector);
     }
 
