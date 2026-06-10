@@ -250,6 +250,7 @@ mod block_bincode {
         transactions: Vec<T::BincodeRepr<'a>>,
         ommers: Vec<H::BincodeRepr<'a>>,
         withdrawals: Cow<'a, Option<Withdrawals>>,
+        slashed: Cow<'a, Option<Withdrawals>>,
     }
 
     impl<'a, T: SerdeBincodeCompat, H: SerdeBincodeCompat>
@@ -260,6 +261,7 @@ mod block_bincode {
                 transactions: value.transactions.iter().map(|tx| tx.as_repr()).collect(),
                 ommers: value.ommers.iter().map(|h| h.as_repr()).collect(),
                 withdrawals: Cow::Borrowed(&value.withdrawals),
+                slashed: Cow::Borrowed(&value.slashed),
             }
         }
     }
@@ -276,6 +278,7 @@ mod block_bincode {
                     .collect(),
                 ommers: value.ommers.into_iter().map(SerdeBincodeCompat::from_repr).collect(),
                 withdrawals: value.withdrawals.into_owned(),
+                slashed: value.slashed.into_owned(),
             }
         }
     }

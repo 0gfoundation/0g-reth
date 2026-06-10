@@ -11,6 +11,7 @@ use reth_db_api::{
     transaction::{DbTx, DbTxMut},
     DbTxUnwindExt,
 };
+use reth_db_models::StoredBlockSlashed;
 use reth_db_models::StoredBlockWithdrawals;
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::{
@@ -110,6 +111,7 @@ where
         let mut ommers_cursor = provider.tx_ref().cursor_write::<tables::BlockOmmers<H>>()?;
         let mut withdrawals_cursor =
             provider.tx_ref().cursor_write::<tables::BlockWithdrawals>()?;
+        let mut slashed_cursor = provider.tx_ref().cursor_write::<tables::BlockSlashed>()?;
 
         for (block_number, body) in bodies {
             let Some(body) = body else { continue };
@@ -126,6 +128,13 @@ where
                         .append(block_number, &StoredBlockWithdrawals { withdrawals })?;
                 }
             }
+
+            // Write slashed validator entries if any
+            if let Some(slashed) = body.slashed {
+                if !slashed.is_empty() {
+                    slashed_cursor.append(block_number, &StoredBlockSlashed { slashed })?;
+                }
+            }
         }
 
         Ok(())
@@ -138,6 +147,7 @@ where
         _remove_from: StorageLocation,
     ) -> ProviderResult<()> {
         provider.tx_ref().unwind_table_by_num::<tables::BlockWithdrawals>(block)?;
+        provider.tx_ref().unwind_table_by_num::<tables::BlockSlashed>(block)?;
         provider.tx_ref().unwind_table_by_num::<tables::BlockOmmers<H>>(block)?;
 
         Ok(())
@@ -161,6 +171,7 @@ where
         let chain_spec = provider.chain_spec();
 
         let mut withdrawals_cursor = provider.tx_ref().cursor_read::<tables::BlockWithdrawals>()?;
+        let mut slashed_cursor = provider.tx_ref().cursor_read::<tables::BlockSlashed>()?;
 
         let mut bodies = Vec::with_capacity(inputs.len());
 
@@ -176,6 +187,11 @@ where
             } else {
                 None
             };
+            let slashed = slashed_cursor
+                .seek_exact(header.number())?
+                .map(|(_, s)| s.slashed)
+                .filter(|s| !s.is_empty())
+                .map(Into::into);
             let ommers = if chain_spec.is_paris_active_at_block(header.number()) {
                 Vec::new()
             } else {
@@ -187,7 +203,7 @@ where
                     .map(|(_, stored_ommers)| stored_ommers.ommers)
                     .unwrap_or_default()
             };
-            bodies.push(alloy_consensus::BlockBody { transactions, ommers, withdrawals });
+            bodies.push(alloy_consensus::BlockBody { transactions, ommers, withdrawals, slashed });
         }
 
         Ok(bodies)
@@ -260,6 +276,7 @@ where
                     withdrawals: chain_spec
                         .is_shanghai_active_at_timestamp(header.timestamp())
                         .then(Default::default),
+                    slashed: None,
                 }
             })
             .collect())
