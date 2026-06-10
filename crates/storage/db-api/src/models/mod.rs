@@ -23,7 +23,7 @@ pub use integer_list::IntegerList;
 pub use metadata::*;
 pub use reth_db_models::{
     AccountBeforeTx, ClientVersion, StaticFileBlockWithdrawals, StorageBeforeTx,
-    StoredBlockBodyIndices, StoredBlockWithdrawals,
+    StoredBlockBodyIndices, StoredBlockSlashed, StoredBlockWithdrawals,
 };
 pub use sharded_key::ShardedKey;
 
@@ -207,7 +207,7 @@ impl Decode for ClientVersion {
     }
 }
 
-impl_compression_for_compact!(StoredBlockOmmers<H>, CompactU256);
+impl_compression_for_compact!(StoredBlockOmmers<H>, StoredBlockSlashed, CompactU256);
 
 /// Adds wrapper structs for some primitive types so they can use `StructFlags` from Compact, when
 /// used as pure table values.

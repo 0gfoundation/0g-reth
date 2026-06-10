@@ -40,6 +40,9 @@ pub trait ExecutionPayload:
     /// Returns `None` for pre-Shanghai blocks.
     fn withdrawals(&self) -> Option<&Vec<Withdrawal>>;
 
+    /// Returns slashed validator entries included in this payload.
+    fn slashed(&self) -> Option<&[Withdrawal]>;
+
     /// Returns the access list included in this payload.
     ///
     /// Returns `None` for pre-Amsterdam blocks.
@@ -82,6 +85,10 @@ impl ExecutionPayload for ExecutionData {
 
     fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
         self.payload.withdrawals()
+    }
+
+    fn slashed(&self) -> Option<&[Withdrawal]> {
+        self.payload.slashed()
     }
 
     fn block_access_list(&self) -> Option<&Bytes> {
@@ -147,6 +154,14 @@ where
         match self {
             Self::ExecutionPayload(payload) => payload.withdrawals(),
             Self::PayloadAttributes(attributes) => attributes.withdrawals(),
+        }
+    }
+
+    /// Returns slashed validator entries from the payload, if present.
+    pub fn slashed(&self) -> Option<&[Withdrawal]> {
+        match self {
+            Self::ExecutionPayload(payload) => payload.slashed(),
+            Self::PayloadAttributes(_) => None,
         }
     }
 

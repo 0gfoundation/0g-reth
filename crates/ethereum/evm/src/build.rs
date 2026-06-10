@@ -129,7 +129,7 @@ impl<ChainSpec: EthChainSpec + EthereumHardforks> EthBlockAssembler<ChainSpec> {
 
         Ok(Block {
             header,
-            body: BlockBody { transactions, ommers: Default::default(), withdrawals },
+            body: BlockBody { transactions, ommers: Default::default(), withdrawals, slashed: None },
         })
     }
 }
