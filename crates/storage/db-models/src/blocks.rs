@@ -88,6 +88,23 @@ pub struct StoredBlockWithdrawals {
 #[cfg(any(test, feature = "reth-codec"))]
 reth_codecs::impl_compression_for_compact!(StoredBlockWithdrawals);
 
+/// The storage representation of slashed validator entries.
+#[derive(Debug, Default, Eq, PartialEq, Clone)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StoredBlockSlashed {
+    /// Slashed validator entries for the block.
+    pub slashed: Withdrawals,
+}
+
+// reth-v2.8.1 migration: 6a4f950b1 listed `StoredBlockSlashed` in `db-api`'s local
+// `impl_compression_for_compact!`; upstream implements compression for `db-models` types next to
+// their definitions, as for `StoredBlockWithdrawals` above.
+#[cfg(any(test, feature = "reth-codec"))]
+reth_codecs::impl_compression_for_compact!(StoredBlockSlashed);
+
 /// A storage representation of block withdrawals that is static file friendly. An inner `None`
 /// represents a pre-merge block.
 #[derive(Debug, Default, Eq, PartialEq, Clone)]

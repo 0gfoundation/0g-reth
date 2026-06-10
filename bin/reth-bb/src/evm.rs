@@ -465,6 +465,9 @@ where
             // alloy-evm (`c3b6832e`, replayed as `5fdc3821`) adds `timestamp` to the ctx; it is
             // copied from the same last segment as every other field here.
             timestamp: last_seg.ctx.timestamp,
+            // reth-v2.8.1 migration: 6a4f950b1's alloy-evm (`1798948c`, replayed as `5b46d25f`)
+            // adds `slashed`; copied from the last segment like the other fields.
+            slashed: last_seg.ctx.slashed.clone(),
             extra_data: last_seg.ctx.extra_data.clone(),
             tx_count_hint: last_seg.ctx.tx_count_hint,
             slot_number: last_seg.ctx.slot_number,

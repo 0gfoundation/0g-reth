@@ -1322,6 +1322,9 @@ mod tests {
             },
             blob_gas_used: 0,
             excess_blob_gas: 0,
+            // reth-v2.8.1 migration: upstream test; 0G's alloy fork adds `slashed` to
+            // `ExecutionPayloadV3` (pinned by 6a4f950b1).
+            slashed: vec![],
         };
         payload.payload_inner.payload_inner.extra_data = vec![0; 32].into();
         payload.payload_inner.withdrawals = vec![Default::default(); 16];

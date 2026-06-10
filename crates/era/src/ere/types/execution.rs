@@ -650,8 +650,11 @@ mod tests {
 
     #[test]
     fn test_block_body_conversion() {
+        // reth-v2.8.1 migration: 6a4f950b1 added `slashed: None` to this fixture in
+        // `era/src/execution_types.rs`; upstream split that file into `era1/types/execution.rs`
+        // and this one, so both copies get it.
         let block_body: BlockBody<Bytes> =
-            BlockBody { transactions: vec![], ommers: vec![], withdrawals: None };
+            BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None };
 
         let compressed_body = CompressedBody::from_body(&block_body).unwrap();
 
@@ -719,7 +722,8 @@ mod tests {
 
         let withdrawals = Some(Withdrawals(vec![]));
 
-        let block_body = BlockBody { transactions, ommers: vec![], withdrawals };
+        // reth-v2.8.1 migration: same as `test_block_body_conversion`.
+        let block_body = BlockBody { transactions, ommers: vec![], withdrawals, slashed: None };
 
         let block = Block::new(header, block_body);
 

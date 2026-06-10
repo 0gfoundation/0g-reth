@@ -23,7 +23,7 @@ use crate::{
         blocks::{HeaderHash, StoredBlockOmmers},
         storage_sharded_key::StorageShardedKey,
         AccountBeforeTx, ClientVersion, CompactU256, IntegerList, ShardedKey,
-        StoredBlockBodyIndices, StoredBlockWithdrawals,
+        StoredBlockBodyIndices, StoredBlockWithdrawals, StoredBlockSlashed,
     },
     table::{Decode, DupSort, Encode, Table, TableInfo},
 };
@@ -350,6 +350,12 @@ tables! {
     table BlockWithdrawals {
         type Key = BlockNumber;
         type Value = StoredBlockWithdrawals;
+    }
+
+    /// Stores slashed validator entries for the block.
+    table BlockSlashed {
+        type Key = BlockNumber;
+        type Value = StoredBlockSlashed;
     }
 
     /// Stores block access list payloads by block number and block hash.
