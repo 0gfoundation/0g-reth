@@ -362,10 +362,17 @@ mod tests {
         let mut wire = vec![BRIDGE_REQUEST_TYPE];
         wire.extend_from_slice(&body);
         let err = decode_bridge_request(&wire).unwrap_err();
-        match err {
-            BridgeDecodeError::Ssz(_) | BridgeDecodeError::TooManyMessages { .. } => {}
-            other => panic!("expected ssz/cap rejection, got {other:?}"),
-        }
+        // Must be the post-decode cap check specifically (carrying the actual length), not an
+        // SSZ structural error — the Container derive has no max_len, so cap+1 messages decode
+        // fine structurally and only `decode_bridge_messages` enforces the cap.
+        assert!(
+            matches!(
+                err,
+                BridgeDecodeError::TooManyMessages { got } if got == MAX_BRIDGE_MESSAGES_PER_BLOCK + 1
+            ),
+            "expected TooManyMessages {{ got: {} }}, got {err:?}",
+            MAX_BRIDGE_MESSAGES_PER_BLOCK + 1
+        );
     }
 
     #[test]
