@@ -60,6 +60,16 @@ pub enum BridgePayloadError {
     /// in seconds instead of correlating with `tracing::warn!` logs after the fact.
     #[error("post-Bridge `engine_newPayloadV4` payload 0xf0 entry SSZ decode failed: {0}")]
     BridgeDecodeFailure(#[from] reth_0g_bridge::BridgeDecodeError),
+    /// `bridge_active_at_timestamp(payload.timestamp)` returned false but the payload's
+    /// `executionRequests` carries a `0xf0` entry. Pre-Bridge the CL never emits a `0xf0`
+    /// entry, so its presence indicates a buggy/byzantine CL or a fork-time misconfiguration
+    /// — accepting it would commit a `requests_hash` covering a request type this node treats
+    /// as undefined, without ever executing the bridge system call.
+    #[error(
+        "pre-Bridge `engine_newPayload` payload carries an unexpected 0xf0 entry in \
+         executionRequests"
+    )]
+    UnexpectedBridgeEntry,
 }
 
 /// Validator for the ethereum engine API.
@@ -133,6 +143,15 @@ where
                     ));
                 }
             }
+        } else if payload.sidecar.requests().is_some_and(|reqs| {
+            reqs.iter().any(|r| r.first() == Some(&reth_0g_bridge::BRIDGE_REQUEST_TYPE))
+        }) {
+            // Mirror image of the post-fork checks: pre-Bridge the CL never emits a `0xf0`
+            // entry, so one showing up here must be rejected rather than sealed into
+            // `requests_hash` as an opaque blob. Pre-Prague payloads (V3 and earlier) have no
+            // executionRequests sidecar at all — `requests()` returns `None` and this check is
+            // a no-op for them.
+            return Err(NewPayloadError::Other(BridgePayloadError::UnexpectedBridgeEntry.into()));
         }
 
         let sealed_block = self.inner.ensure_well_formed_payload(payload)?;
@@ -338,6 +357,7 @@ mod tests {
     //   * bridge_active + no 0xf0 entry        → `MissingBridgeEntry`           (Q1)
     //   * bridge_active + malformed 0xf0 SSZ   → `BridgeDecodeFailure(...)`     (Q2)
     //   * bridge_inactive + no 0xf0 entry      → check skipped (current behaviour preserved)
+    //   * bridge_inactive + 0xf0 entry present → `UnexpectedBridgeEntry`
     //
     // These tests construct only the failure paths (the check returns `Err` before
     // `self.inner.ensure_well_formed_payload` runs, so a minimal synthetic payload suffices —
@@ -483,5 +503,43 @@ mod tests {
                 "pre-Bridge payload must not hit the bridge entry check; got: {msg}",
             );
         }
+    }
+
+    /// Pre-Bridge payload that DOES carry a 0xf0 entry must be hard-rejected with
+    /// `UnexpectedBridgeEntry` — pre-fork the CL never emits one, so its presence is a
+    /// buggy/byzantine CL or a fork-time misconfiguration. Without the reject, the entry would
+    /// be sealed into `requests_hash` as an opaque blob with no bridge system call executed.
+    #[test]
+    fn bridge_inactive_payload_with_0xf0_entry_is_rejected() {
+        let spec = spec_with_bridge(0); // bridge inactive forever
+        // Forged 0xf0 entry with a perfectly valid empty-list SSZ body — validity of the body
+        // is irrelevant pre-fork, presence alone must reject.
+        let payload = make_payload(
+            100,
+            vec![Bytes::from_static(&[0xf0, 0x04, 0x00, 0x00, 0x00])],
+        );
+        let err = validate_payload(spec, payload).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unexpected 0xf0 entry"),
+            "expected UnexpectedBridgeEntry error, got: {msg}",
+        );
+    }
+
+    /// Same as above but with the fork configured in the future (rather than disabled via the
+    /// `0` sentinel): a 0xf0 entry showing up before the activation timestamp must reject.
+    #[test]
+    fn bridge_pre_activation_payload_with_0xf0_entry_is_rejected() {
+        let spec = spec_with_bridge(1_000_000); // bridge activates later
+        let payload = make_payload(
+            100, // timestamp < activation
+            vec![Bytes::from_static(&[0xf0, 0x04, 0x00, 0x00, 0x00])],
+        );
+        let err = validate_payload(spec, payload).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unexpected 0xf0 entry"),
+            "expected UnexpectedBridgeEntry error, got: {msg}",
+        );
     }
 }
