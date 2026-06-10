@@ -766,6 +766,21 @@ impl From<Genesis> for ChainSpec {
             .and_then(|r| r.ok())
             .unwrap_or(0);
 
+        // Bridge ⟹ Prague: block assembly assumes every bridge-active block carries the
+        // EIP-7685 `requests_hash` header field (the bridge `0xf0` entry is pushed into the
+        // Prague execution-requests list), so Prague must already be active at the bridge
+        // activation timestamp. Fail at startup on a misordered genesis instead of producing
+        // bridge blocks whose headers can't hold the requests commitment.
+        if bridge_activation_time > 0 &&
+            !genesis.config.prague_time.is_some_and(|prague| prague <= bridge_activation_time)
+        {
+            panic!(
+                "invalid genesis: bridge fork requires prague active at or before bridge \
+                 activation (bridgeForkTime = {bridge_activation_time}, pragueTime = {:?})",
+                genesis.config.prague_time
+            );
+        }
+
         let hardforks = ChainHardforks::new(ordered_hardforks);
 
         Self {
@@ -2412,6 +2427,45 @@ Post-merge hard forks (timestamp based):
         assert_eq!(genesis.config.cancun_time, Some(4661));
         // assert that the prague time was picked up
         assert_eq!(genesis.config.prague_time, Some(4662));
+    }
+
+    /// Genesis with `bridgeForkTime` before `pragueTime` must fail spec construction: bridge
+    /// blocks push their `0xf0` entry into the Prague (EIP-7685) execution-requests list and
+    /// block assembly assumes every bridge-active block header carries `requests_hash`, so a
+    /// bridge-active-but-pre-Prague window would build headerless-commitment bridge blocks.
+    #[test]
+    #[should_panic(expected = "bridge fork requires prague active at or before bridge")]
+    fn bridge_fork_before_prague_is_rejected() {
+        let s = r#"{"config":{"chainId":1337,"shanghaiTime":0,"cancunTime":0,"pragueTime":200,"bridgeForkTime":100},"nonce":"0x0","timestamp":"0x0","extraData":"0x","gasLimit":"0x4c4b40","difficulty":"0x1","alloc":{}}"#;
+        let genesis: Genesis = serde_json::from_str(s).unwrap();
+        let _ = ChainSpec::from(genesis);
+    }
+
+    /// Same invariant when `pragueTime` is absent entirely: a configured bridge fork with no
+    /// Prague activation at all must fail spec construction.
+    #[test]
+    #[should_panic(expected = "bridge fork requires prague active at or before bridge")]
+    fn bridge_fork_without_prague_is_rejected() {
+        let s = r#"{"config":{"chainId":1337,"shanghaiTime":0,"cancunTime":0,"bridgeForkTime":100},"nonce":"0x0","timestamp":"0x0","extraData":"0x","gasLimit":"0x4c4b40","difficulty":"0x1","alloc":{}}"#;
+        let genesis: Genesis = serde_json::from_str(s).unwrap();
+        let _ = ChainSpec::from(genesis);
+    }
+
+    /// Well-ordered genesis (prague at or before bridge) constructs fine and picks up the
+    /// bridge activation time; absent `bridgeForkTime` keeps the bridge disabled with no
+    /// Prague requirement.
+    #[test]
+    fn bridge_fork_at_or_after_prague_is_accepted() {
+        let s = r#"{"config":{"chainId":1337,"shanghaiTime":0,"cancunTime":0,"pragueTime":100,"bridgeForkTime":100},"nonce":"0x0","timestamp":"0x0","extraData":"0x","gasLimit":"0x4c4b40","difficulty":"0x1","alloc":{}}"#;
+        let genesis: Genesis = serde_json::from_str(s).unwrap();
+        let spec = ChainSpec::from(genesis);
+        assert_eq!(spec.bridge_activation_time, 100);
+
+        // No bridgeForkTime → bridge disabled (sentinel 0), prague-less genesis is fine.
+        let s = r#"{"config":{"chainId":1337,"shanghaiTime":0,"cancunTime":0},"nonce":"0x0","timestamp":"0x0","extraData":"0x","gasLimit":"0x4c4b40","difficulty":"0x1","alloc":{}}"#;
+        let genesis: Genesis = serde_json::from_str(s).unwrap();
+        let spec = ChainSpec::from(genesis);
+        assert_eq!(spec.bridge_activation_time, 0);
     }
 
     #[test]
