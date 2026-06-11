@@ -1213,6 +1213,7 @@ mod bridge_tests {
             src_block: 7,
         };
         let ssz = BridgeRequests { messages: vec![msg] }.as_ssz_bytes();
+        let ssz_for_raw = ssz.clone();
 
         // Minimal sealed parent header — `context_for_next_block` only reads `parent_hash`
         // off the parent (the rest of the EVM env is sourced from `attributes`).
@@ -1230,6 +1231,15 @@ mod bridge_tests {
 
         let ctx = provider.context_for_next_block(&parent, attrs);
         let cd = ctx.bridge_request.as_deref().expect("build path produces calldata");
+
+        // Verbatim pass-through: the build path must carry the raw attrs SSZ blob unchanged into
+        // `bridge_request_raw` (this is what `finish()` later appends as the 0xf0 entry; any
+        // decode→re-encode would break proposer/verifier byte-equality of `executionRequests`).
+        assert_eq!(
+            ctx.bridge_request_raw.as_deref().map(|b| b.as_ref()),
+            Some(ssz_for_raw.as_slice()),
+            "build path must thread the original attrs SSZ blob verbatim into bridge_request_raw"
+        );
 
         let decoded = parkRemoteMessagesCall::abi_decode(cd.as_ref()).expect("calldata decodes");
         assert_eq!(decoded.msgs.len(), 1, "one InboundMessage");
@@ -1321,6 +1331,17 @@ mod bridge_tests {
             .as_deref()
             .expect("verify path produces calldata when 0xf0 entry present");
 
+        // Verbatim pass-through: the verify path must carry the 0xf0 entry's SSZ body (the entry
+        // with its type byte stripped, i.e. `&entry_0xf0[1..]`) unchanged into
+        // `bridge_request_raw`, so `finish()` re-pushes byte-identical bytes and the verifier's
+        // `requests_hash` matches the proposer-built sealed header.
+        assert_eq!(
+            ctx_verify.bridge_request_raw.as_deref().map(|b| b.as_ref()),
+            Some(&entry_0xf0[1..]),
+            "verify path must thread the 0xf0 entry SSZ body (type byte stripped) verbatim into \
+             bridge_request_raw"
+        );
+
         // Build calldata directly with the same fee-recipient — what the proposer's
         // `context_for_next_block` produces given matching attrs.
         let cd_build = reth_0g_bridge::encode_park_remote_messages_calldata(
@@ -1408,8 +1429,10 @@ mod bridge_tests {
 
     /// Both crates declare `BRIDGE_REQUEST_TYPE = 0xf0` independently (alloy-evm can't depend on
     /// reth-0g-bridge — the dependency goes the other way). If anyone updates the constant in
-    /// one crate without the other, wire format silently diverges (CL ↔ EL block-hash mismatch
-    /// repeat of 2026-04-29 Bug #2). Lock the two constants together at test time.
+    /// one crate without the other, wire format silently diverges: the 0xf0 entry the executor
+    /// pushes would carry a type byte the decoder no longer recognizes, the sealed
+    /// `requests_hash` would cover a different entry than the CL expects, and the block hash
+    /// would mismatch on the consensus side. Lock the two constants together at test time.
     ///
     /// Note: this does NOT catch CL Go-side drift. The Go-side `BridgeRequestType` constant
     /// in `0g-chain-ng/primitives/constants` is frozen by cross-stream convention; ensuring it

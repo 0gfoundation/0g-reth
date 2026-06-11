@@ -44,9 +44,11 @@ pub enum BridgeAttributesError {
 /// specific, actionable error rather than a generic `PayloadBlockHashMismatch` further down
 /// the pipeline. Without these the failure mode is "silently skip the bridge system call but
 /// still seal a `requests_hash` covering the malformed entry" → bridge state diverges from
-/// network without any visible reject. See 2026-04-29 Session 5 Bug #2 in the integration-test
-/// findings for the empirical motivation (schema drift that this class of check would have
-/// caught immediately).
+/// network without any visible reject. Empirically this guards against CL↔EL schema drift: the
+/// `0xf0` entry must be appended into the requests list *before* the sealed header's
+/// `requests_hash` is computed, otherwise the CL's re-assembled block hash disagrees with the
+/// payload's `block_hash` and the block is rejected — a failure these checks surface up front
+/// instead of as a downstream `PayloadBlockHashMismatch`.
 #[derive(Debug, thiserror::Error)]
 pub enum BridgePayloadError {
     /// `bridge_active_at_timestamp(payload.timestamp)` returned true but the payload's

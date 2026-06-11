@@ -181,6 +181,55 @@ mod tests {
         assert_eq!(decoded.msgs[0].feeRecipient, FEE_RECIPIENT);
     }
 
+    /// Cross-language calldata fixture: byte-level lock against a hardcoded hex string shared
+    /// verbatim with the Foundry side, which runs the mirror decode against the same literal.
+    ///
+    /// Selector + `parkRemoteMessages` roundtrip tests cannot catch same-type field
+    /// transpositions: swapping `srcChainID`↔`nonce` (both `uint64`) or
+    /// `localToken`↔`recipient`↔`feeRecipient` (all `address`) re-encodes to a byte string that
+    /// still decodes cleanly and still carries the selector. Only an external fixture with
+    /// distinct per-field values pins the field *order* across the language boundary.
+    ///
+    /// Fixed values (must stay in lockstep with the Foundry mirror test):
+    /// - srcChainID = 16601, nonce = 42
+    /// - localToken = 0x1111…1111, recipient = 0x2222…2222
+    /// - amount = 1e18, feeRecipient = 0x3333…3333
+    #[test]
+    fn calldata_byte_equal_to_cross_language_fixture() {
+        let msg = BridgeMessage {
+            src_chain_id: 16601,
+            dst_chain_id: 16601,
+            nonce: 42,
+            local_token: FixedBytes([0x11; 20]),
+            recipient: FixedBytes([0x22; 20]),
+            amount: FixedBytes(U256::from(1_000_000_000_000_000_000u128).to_be_bytes::<32>()),
+            mode: 1,
+            src_block: 7,
+        };
+        let fee_recipient = Address::new([0x33; 20]);
+        let cd = encode_park_remote_messages_calldata(&[msg], 16601, fee_recipient);
+
+        // Hardcoded calldata the Foundry side decodes against the same field values. Locks
+        // selector + ABI head/tail layout + per-field byte offsets across Rust ↔ Solidity.
+        let expected = alloy_primitives::hex!(
+            "7c31c30f"
+            "0000000000000000000000000000000000000000000000000000000000000020"
+            "0000000000000000000000000000000000000000000000000000000000000001"
+            "00000000000000000000000000000000000000000000000000000000000040d9"
+            "000000000000000000000000000000000000000000000000000000000000002a"
+            "0000000000000000000000001111111111111111111111111111111111111111"
+            "0000000000000000000000002222222222222222222222222222222222222222"
+            "0000000000000000000000000000000000000000000000000de0b6b3a7640000"
+            "0000000000000000000000003333333333333333333333333333333333333333"
+        );
+        assert_eq!(
+            cd.as_ref(),
+            &expected[..],
+            "parkRemoteMessages calldata must be byte-equal to the cross-language fixture; any \
+             drift (selector, field order, byte width, endianness) breaks the Foundry mirror"
+        );
+    }
+
     #[test]
     fn fee_recipient_is_stamped_on_every_message() {
         // All `InboundMessage` entries in a batch carry the same per-block proposer fee
