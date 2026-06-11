@@ -6,7 +6,7 @@ use crate::{
     util::{hmac_sha256, sha256},
     ECIESError,
 };
-use aes::{cipher::StreamCipher, Aes128, Aes256};
+use aes::{cipher::StreamCipher, Aes256};
 use alloy_primitives::{
     bytes::{BufMut, Bytes, BytesMut},
     B128, B256, B512 as PeerId,
@@ -24,7 +24,13 @@ use secp256k1::{
 use sha2::Sha256;
 use sha3::Keccak256;
 
-const PROTOCOL_VERSION: usize = 4;
+/// RLPx handshake protocol version. Version 5 enables AES-256-CTR for ECIES handshake
+/// encryption (0G extension; standard devp2p uses version 4 with AES-128-CTR).
+const PROTOCOL_VERSION: usize = 5;
+
+/// KDF output length for ECIES handshake key derivation: 32-byte encryption key + 16-byte MAC
+/// material.
+const ECIES_KDF_LEN: usize = 48;
 
 /// Computes the shared secret with ECDH and strips the y coordinate after computing the shared
 /// secret.
@@ -48,6 +54,15 @@ fn ecdh_x(public_key: &PublicKey, secret_key: &SecretKey) -> B256 {
 ///   cannot have a len greater than 32 * 2^32 - 1.
 fn kdf(secret: B256, s1: &[u8], dest: &mut [u8]) {
     concat_kdf::derive_key_into::<Sha256>(secret.as_slice(), s1, dest).unwrap();
+}
+
+/// Derives AES-256 encryption and MAC keys for the ECIES handshake from a shared ECDH secret.
+fn derive_ecies_symmetric_keys(shared_secret: B256) -> RLPxSymmetricKeys {
+    let mut key = [0u8; ECIES_KDF_LEN];
+    kdf(shared_secret, &[], &mut key);
+    let enc_key = B256::from_slice(&key[..32]);
+    let mac_key = sha256(&key[32..48]);
+    RLPxSymmetricKeys { enc_key, mac_key }
 }
 
 pub struct ECIES {
@@ -112,7 +127,9 @@ fn split_at_mut<T>(arr: &mut [T], idx: usize) -> Result<(&mut [T], &mut [T]), EC
 /// `(Px, Py) = kB * R` as well as the encryption and authentication keys `kE || kM = KDF(S, 32)`.
 ///
 /// Bob verifies the authenticity of the message by checking whether `d == MAC(sha256(kM), iv ||
-/// c)` then obtains the plaintext as `m = AES(kE, iv || c)`.
+/// c)` then obtains the plaintext as `m = AES-256-CTR(kE, iv || c)`.
+///
+/// 0G extends standard devp2p ECIES (AES-128) by deriving a 32-byte `kE` via `KDF(S, 48)`.
 #[derive(Debug)]
 pub struct EncryptedMessage<'a> {
     /// The auth data, used when checking the `tag` with HMAC-SHA256.
@@ -177,32 +194,10 @@ impl<'a> EncryptedMessage<'a> {
     /// Use the given secret and this encrypted message to derive the shared secret, and use the
     /// shared secret to derive the mac and encryption keys.
     pub fn derive_keys(&self, secret_key: &SecretKey) -> RLPxSymmetricKeys {
-        // perform ECDH to get the shared secret, using the remote public key from the message and
-        // the given secret key
+        // Perform ECDH to get the shared secret, using the remote public key from the message and
+        // the given secret key.
         let x = ecdh_x(&self.public_key, secret_key);
-        let mut key = [0u8; 32];
-
-        // The RLPx spec describes the key derivation process as:
-        //
-        // kE || kM = KDF(S, 32)
-        //
-        // where kE is the encryption key, and kM is used to determine the MAC key (see below)
-        //
-        // NOTE: The RLPx spec does not define an `OtherInfo` parameter, and this is unused in
-        // other implementations, so we use an empty slice.
-        kdf(x, &[], &mut key);
-
-        let enc_key = B128::from_slice(&key[..16]);
-
-        // The MAC tag check operation described is:
-        //
-        // d == MAC(sha256(kM), iv || c)
-        //
-        // where kM is the result of the above KDF, iv is the IV, and c is the encrypted data.
-        // Because the hash of kM is ultimately used as the mac key, we perform that hashing here.
-        let mac_key = sha256(&key[16..32]);
-
-        RLPxSymmetricKeys { enc_key, mac_key }
+        derive_ecies_symmetric_keys(x)
     }
 
     /// Use the given ECIES keys to check the message integrity using the contained tag.
@@ -248,7 +243,7 @@ impl<'a> EncryptedMessage<'a> {
         // rename for clarity once it's decrypted
         let decrypted_data = encrypted_data;
 
-        let mut decryptor = Ctr64BE::<Aes128>::new((&keys.enc_key.0).into(), (&*iv).into());
+        let mut decryptor = Ctr64BE::<Aes256>::new((&keys.enc_key.0).into(), (&*iv).into());
         decryptor.apply_keystream(decrypted_data);
         decrypted_data
     }
@@ -264,9 +259,8 @@ impl<'a> EncryptedMessage<'a> {
 /// The symmetric keys derived from an ECIES message.
 #[derive(Debug)]
 pub struct RLPxSymmetricKeys {
-    /// The key used for decryption, specifically with AES-128 in CTR mode, using a 64-bit big
-    /// endian counter.
-    pub enc_key: B128,
+    /// The key used for decryption with AES-256 in CTR mode, using a 64-bit big-endian counter.
+    pub enc_key: B256,
 
     /// The key used for verifying message integrity, specifically with the NIST SP 800-56A Concat
     /// KDF.
@@ -377,14 +371,10 @@ impl ECIES {
         );
 
         let x = ecdh_x(&self.remote_public_key.unwrap(), &secret_key);
-        let mut key = [0u8; 32];
-        kdf(x, &[], &mut key);
-
-        let enc_key = B128::from_slice(&key[..16]);
-        let mac_key = sha256(&key[16..32]);
+        let RLPxSymmetricKeys { enc_key, mac_key } = derive_ecies_symmetric_keys(x);
 
         let iv = B128::random();
-        let mut encryptor = Ctr64BE::<Aes128>::new((&enc_key.0).into(), (&iv.0).into());
+        let mut encryptor = Ctr64BE::<Aes256>::new((&enc_key.0).into(), (&iv.0).into());
 
         let mut encrypted = data.to_vec();
         encryptor.apply_keystream(&mut encrypted);
@@ -873,93 +863,16 @@ mod tests {
     }
 
     #[test]
-    /// Test vectors from <https://eips.ethereum.org/EIPS/eip-8>
-    fn eip8_test() {
-        // EIP-8 format with version 4 and no additional list elements
-        let auth2 = hex!(
-            "
-        01b304ab7578555167be8154d5cc456f567d5ba302662433674222360f08d5f1534499d3678b513b
-        0fca474f3a514b18e75683032eb63fccb16c156dc6eb2c0b1593f0d84ac74f6e475f1b8d56116b84
-        9634a8c458705bf83a626ea0384d4d7341aae591fae42ce6bd5c850bfe0b999a694a49bbbaf3ef6c
-        da61110601d3b4c02ab6c30437257a6e0117792631a4b47c1d52fc0f8f89caadeb7d02770bf999cc
-        147d2df3b62e1ffb2c9d8c125a3984865356266bca11ce7d3a688663a51d82defaa8aad69da39ab6
-        d5470e81ec5f2a7a47fb865ff7cca21516f9299a07b1bc63ba56c7a1a892112841ca44b6e0034dee
-        70c9adabc15d76a54f443593fafdc3b27af8059703f88928e199cb122362a4b35f62386da7caad09
-        c001edaeb5f8a06d2b26fb6cb93c52a9fca51853b68193916982358fe1e5369e249875bb8d0d0ec3
-        6f917bc5e1eafd5896d46bd61ff23f1a863a8a8dcd54c7b109b771c8e61ec9c8908c733c0263440e
-        2aa067241aaa433f0bb053c7b31a838504b148f570c0ad62837129e547678c5190341e4f1693956c
-        3bf7678318e2d5b5340c9e488eefea198576344afbdf66db5f51204a6961a63ce072c8926c
-        "
-        );
-
-        // EIP-8 format with version 56 and 3 additional list elements (sent from A to B)
-        let auth3 = hex!(
-            "
-        01b8044c6c312173685d1edd268aa95e1d495474c6959bcdd10067ba4c9013df9e40ff45f5bfd6f7
-        2471f93a91b493f8e00abc4b80f682973de715d77ba3a005a242eb859f9a211d93a347fa64b597bf
-        280a6b88e26299cf263b01b8dfdb712278464fd1c25840b995e84d367d743f66c0e54a586725b7bb
-        f12acca27170ae3283c1073adda4b6d79f27656993aefccf16e0d0409fe07db2dc398a1b7e8ee93b
-        cd181485fd332f381d6a050fba4c7641a5112ac1b0b61168d20f01b479e19adf7fdbfa0905f63352
-        bfc7e23cf3357657455119d879c78d3cf8c8c06375f3f7d4861aa02a122467e069acaf513025ff19
-        6641f6d2810ce493f51bee9c966b15c5043505350392b57645385a18c78f14669cc4d960446c1757
-        1b7c5d725021babbcd786957f3d17089c084907bda22c2b2675b4378b114c601d858802a55345a15
-        116bc61da4193996187ed70d16730e9ae6b3bb8787ebcaea1871d850997ddc08b4f4ea668fbf3740
-        7ac044b55be0908ecb94d4ed172ece66fd31bfdadf2b97a8bc690163ee11f5b575a4b44e36e2bfb2
-        f0fce91676fd64c7773bac6a003f481fddd0bae0a1f31aa27504e2a533af4cef3b623f4791b2cca6
-        d490
-        "
-        );
-
-        // EIP-8 format with version 4 and no additional list elements (sent from B to A)
-        let ack2 = hex!(
-            "
-        01ea0451958701280a56482929d3b0757da8f7fbe5286784beead59d95089c217c9b917788989470
-        b0e330cc6e4fb383c0340ed85fab836ec9fb8a49672712aeabbdfd1e837c1ff4cace34311cd7f4de
-        05d59279e3524ab26ef753a0095637ac88f2b499b9914b5f64e143eae548a1066e14cd2f4bd7f814
-        c4652f11b254f8a2d0191e2f5546fae6055694aed14d906df79ad3b407d94692694e259191cde171
-        ad542fc588fa2b7333313d82a9f887332f1dfc36cea03f831cb9a23fea05b33deb999e85489e645f
-        6aab1872475d488d7bd6c7c120caf28dbfc5d6833888155ed69d34dbdc39c1f299be1057810f34fb
-        e754d021bfca14dc989753d61c413d261934e1a9c67ee060a25eefb54e81a4d14baff922180c395d
-        3f998d70f46f6b58306f969627ae364497e73fc27f6d17ae45a413d322cb8814276be6ddd13b885b
-        201b943213656cde498fa0e9ddc8e0b8f8a53824fbd82254f3e2c17e8eaea009c38b4aa0a3f306e8
-        797db43c25d68e86f262e564086f59a2fc60511c42abfb3057c247a8a8fe4fb3ccbadde17514b7ac
-        8000cdb6a912778426260c47f38919a91f25f4b5ffb455d6aaaf150f7e5529c100ce62d6d92826a7
-        1778d809bdf60232ae21ce8a437eca8223f45ac37f6487452ce626f549b3b5fdee26afd2072e4bc7
-        5833c2464c805246155289f4
-        "
-        );
-
-        // EIP-8 format with version 57 and 3 additional list elements (sent from B to A)
-        let ack3 = hex!(
-            "
-        01f004076e58aae772bb101ab1a8e64e01ee96e64857ce82b1113817c6cdd52c09d26f7b90981cd7
-        ae835aeac72e1573b8a0225dd56d157a010846d888dac7464baf53f2ad4e3d584531fa203658fab0
-        3a06c9fd5e35737e417bc28c1cbf5e5dfc666de7090f69c3b29754725f84f75382891c561040ea1d
-        dc0d8f381ed1b9d0d4ad2a0ec021421d847820d6fa0ba66eaf58175f1b235e851c7e2124069fbc20
-        2888ddb3ac4d56bcbd1b9b7eab59e78f2e2d400905050f4a92dec1c4bdf797b3fc9b2f8e84a482f3
-        d800386186712dae00d5c386ec9387a5e9c9a1aca5a573ca91082c7d68421f388e79127a5177d4f8
-        590237364fd348c9611fa39f78dcdceee3f390f07991b7b47e1daa3ebcb6ccc9607811cb17ce51f1
-        c8c2c5098dbdd28fca547b3f58c01a424ac05f869f49c6a34672ea2cbbc558428aa1fe48bbfd6115
-        8b1b735a65d99f21e70dbc020bfdface9f724a0d1fb5895db971cc81aa7608baa0920abb0a565c9c
-        436e2fd13323428296c86385f2384e408a31e104670df0791d93e743a3a5194ee6b076fb6323ca59
-        3011b7348c16cf58f66b9633906ba54a2ee803187344b394f75dd2e663a57b956cb830dd7a908d4f
-        39a2336a61ef9fda549180d4ccde21514d117b6c6fd07a9102b5efe710a32af4eeacae2cb3b1dec0
-        35b9593b48b9d3ca4c13d245d5f04169b0b1
-        "
-        );
-
-        eip8_test_server().read_auth(&mut auth2.to_vec()).unwrap();
-        eip8_test_server().read_auth(&mut auth3.to_vec()).unwrap();
-
+    /// EIP-8 auth/ack round-trip with protocol version 5 (AES-256-CTR handshake).
+    ///
+    /// Standard EIP-8 test vectors from <https://eips.ethereum.org/EIPS/eip-8> use AES-128-CTR
+    /// and are not applicable after the 0G AES-256 handshake extension.
+    fn eip8_handshake_round_trip() {
         let mut test_client = eip8_test_client();
         let mut test_server = eip8_test_server();
 
         test_server.read_auth(&mut test_client.create_auth()).unwrap();
-
         test_client.read_ack(&mut test_server.create_ack()).unwrap();
-
-        test_client.read_ack(&mut ack2.to_vec()).unwrap();
-        test_client.read_ack(&mut ack3.to_vec()).unwrap();
     }
 
     #[test]
