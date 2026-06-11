@@ -77,7 +77,7 @@ where
         };
         let hits = lookup.iter().filter(|s| s.is_some()).count();
         let misses = n - hits;
-        tracing::debug!(
+        tracing::info!(
             target: "engine::signer_cache",
             hits,
             misses,
