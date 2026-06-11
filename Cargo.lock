@@ -9217,6 +9217,7 @@ dependencies = [
  "eyre",
  "futures",
  "rand 0.9.4",
+ "rayon",
  "reth-chainspec",
  "reth-db",
  "reth-e2e-test-utils",
@@ -9249,6 +9250,7 @@ dependencies = [
  "revm",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
