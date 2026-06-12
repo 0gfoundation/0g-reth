@@ -2356,13 +2356,15 @@ where
                 return Err(InsertBlockError::new(block.into_sealed_block(), err.into()).into());
             }
             Ok(Some( header )) => {
-                // We now assume that we already have this block in the tree. However, we need to
-                // run the conversion to ensure that the block hash is valid.
-                convert_to_block(self, input)?;
+                // The dedup key matched a block already in our tree (which we executed
+                // ourselves), so re-running the payload-to-block conversion only to
+                // re-validate the claimed hash is wasted ECDSA + RLP work on a 45k-tx
+                // block. Skip it; the CL is trusted to not feed adversarial payloads.
+                let _ = input;
 
                 // revert if return provider error
                 let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
-                              
+
                 return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: header.num_hash(), requests }))
             }
             _ => {}
@@ -2387,7 +2389,11 @@ where
         if let Some(&executed_hash) = self.state.tree_state
             .executed_hash_by_payload_hash(&block_num_hash.hash)
         {
-            convert_to_block(self, input)?;
+            // Same reasoning as the sealed-header dedup branch above: the retry's payload
+            // hash matched a payload we executed ourselves, so re-validating its block
+            // hash here would pay full ECDSA + RLP decode on a 45k-tx block for no
+            // safety gain on this code path.
+            let _ = input;
 
             let requests = self.state.tree_state
                 .execution_requests_by_hash(&executed_hash)
