@@ -17,14 +17,7 @@ use reth_primitives_traits::{
 /// `SAFETY_MARGIN` = `2_097_152`
 pub const MAX_RLP_BLOCK_SIZE: usize = 8_388_608;
 
-///  The chain ID for the 0G Chain devnet.
-pub const ZG_DEVNET_CHAIN_ID: u64 = 16_601;
-
-/// The chain ID for the 0G Chain testnet.
-pub const ZG_TESTNET_CHAIN_ID: u64 = 16_602;
-
-/// The chain ID for the 0G Chain mainnet.
-pub const ZG_MAINNET_CHAIN_ID: u64 = 16_661;
+pub use reth_chainspec::{ZG_DEVNET_CHAIN_ID, ZG_MAINNET_CHAIN_ID, ZG_TESTNET_CHAIN_ID};
 
 /// Minimum gas limit hardfork timestamp for [`ZG_DEVNET_CHAIN_ID`].
 pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_DEVNET: u64 = 0;
