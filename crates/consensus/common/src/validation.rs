@@ -17,14 +17,7 @@ use reth_primitives_traits::{
 /// `SAFETY_MARGIN` = `2_097_152`
 pub const MAX_RLP_BLOCK_SIZE: usize = 8_388_608;
 
-///  The chain ID for the 0G Chain devnet.
-pub const ZG_DEVNET_CHAIN_ID: u64 = 16_601;
-
-/// The chain ID for the 0G Chain testnet.
-pub const ZG_TESTNET_CHAIN_ID: u64 = 16_602;
-
-/// The chain ID for the 0G Chain mainnet.
-pub const ZG_MAINNET_CHAIN_ID: u64 = 16_661;
+pub use reth_chainspec::{ZG_DEVNET_CHAIN_ID, ZG_MAINNET_CHAIN_ID, ZG_TESTNET_CHAIN_ID};
 
 /// Minimum gas limit hardfork timestamp for [`ZG_DEVNET_CHAIN_ID`].
 pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_DEVNET: u64 = 0;
@@ -306,11 +299,19 @@ pub fn validate_4844_header_standalone<H: BlockHeader>(
 ///
 /// From yellow paper: extraData: An arbitrary byte array containing data relevant to this block.
 /// This must be 32 bytes or fewer; formally Hx.
+///
+/// Geth exempts the genesis block from this limit (`MaximumExtraDataSize` applies after genesis).
 #[inline]
+// reth-v2.8.1 migration: 9119fbf6a added the genesis early return to the one-argument
+// `validate_header_extra_data(header)`; upstream since takes the limit as `max_size`, and the
+// early return is kept in front of that check.
 pub fn validate_header_extra_data<H: BlockHeader>(
     header: &H,
     max_size: usize,
 ) -> Result<(), ConsensusError> {
+    if header.number() == 0 {
+        return Ok(());
+    }
     let extra_data_len = header.extra_data().len();
     if extra_data_len > max_size {
         Err(ConsensusError::ExtraDataExceedsMax { len: extra_data_len })
@@ -505,13 +506,42 @@ pub fn validate_against_parent_4844<H: BlockHeader>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{BlockBody, Header, TxEip4844};
+    // reth-v2.8.1 migration: `MAXIMUM_EXTRA_DATA_SIZE` is imported for 9119fbf6a's two tests
+    // below, which now pass the limit that upstream made an argument.
+    use alloy_consensus::{constants::MAXIMUM_EXTRA_DATA_SIZE, BlockBody, Header, TxEip4844};
     use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip4895::Withdrawals};
     use alloy_primitives::{Address, Bytes, Signature, U256};
     use rand::Rng;
     use reth_chainspec::ChainSpecBuilder;
     use reth_ethereum_primitives::{Transaction, TransactionSigned};
     use reth_primitives_traits::proofs;
+
+    // reth-v2.8.1 migration: 9119fbf6a called `validate_header_extra_data(&header)` and compared
+    // with `assert_eq!`. Upstream takes the limit as an argument (the consensus passes
+    // `MAXIMUM_EXTRA_DATA_SIZE` by default) and `ConsensusError` no longer implements `PartialEq`,
+    // so the calls pass that limit and the error is checked with `matches!`.
+    #[test]
+    fn genesis_extra_data_may_exceed_max_length() {
+        let header = Header {
+            number: 0,
+            extra_data: Bytes::from(vec![0u8; 117]),
+            ..Default::default()
+        };
+        assert!(validate_header_extra_data(&header, MAXIMUM_EXTRA_DATA_SIZE).is_ok());
+    }
+
+    #[test]
+    fn non_genesis_extra_data_exceeds_max_length() {
+        let header = Header {
+            number: 1,
+            extra_data: Bytes::from(vec![0u8; 117]),
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_header_extra_data(&header, MAXIMUM_EXTRA_DATA_SIZE).unwrap_err(),
+            ConsensusError::ExtraDataExceedsMax { len: 117 }
+        ));
+    }
 
     fn mock_blob_tx(nonce: u64, num_blobs: usize) -> TransactionSigned {
         let mut rng = rand::rng();
@@ -556,6 +586,7 @@ mod tests {
             transactions: vec![transaction],
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
+            slashed: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
@@ -573,12 +604,19 @@ mod tests {
 
     #[test]
     fn validate_header_extra_data_with_custom_limit() {
+        // reth-v2.8.1 migration: upstream test. Its headers used `..Default::default()`, which
+        // leaves `number: 0`; 9119fbf6a exempts genesis from the limit, so at height 0 the
+        // `unwrap_err()` below would get `Ok` and the 32-byte check would pass without consulting
+        // the limit. The test is about `max_size`, so both headers are at height 1 (same as the
+        // reth v2.4.1 migration).
         // Test with default 32 bytes - should pass
-        let header_32 = Header { extra_data: Bytes::from(vec![0; 32]), ..Default::default() };
+        let header_32 =
+            Header { number: 1, extra_data: Bytes::from(vec![0; 32]), ..Default::default() };
         assert!(validate_header_extra_data(&header_32, 32).is_ok());
 
         // Test exceeding default - should fail
-        let header_33 = Header { extra_data: Bytes::from(vec![0; 33]), ..Default::default() };
+        let header_33 =
+            Header { number: 1, extra_data: Bytes::from(vec![0; 33]), ..Default::default() };
         assert!(matches!(
             validate_header_extra_data(&header_33, 32).unwrap_err(),
             ConsensusError::ExtraDataExceedsMax { len } if len == 33
