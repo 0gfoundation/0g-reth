@@ -30,7 +30,7 @@ pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_DEVNET: u64 = 0;
 pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_TESTNET: u64 = 1_777_852_800;
 
 /// Minimum gas limit hardfork timestamp for [`ZG_MAINNET_CHAIN_ID`].
-pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_MAINNET: u64 = 1_778_716_800;
+pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_MAINNET: u64 = 1_782_432_000;
 
 /// Block gas limit floor after the minimum-gas-limit hardfork (replaces [`MINIMUM_GAS_LIMIT`]).
 pub const MINIMUM_GAS_LIMIT_POST_FORK: u64 = 20_000_000;
