@@ -17,14 +17,7 @@ use reth_primitives_traits::{
 /// `SAFETY_MARGIN` = `2_097_152`
 pub const MAX_RLP_BLOCK_SIZE: usize = 8_388_608;
 
-///  The chain ID for the 0G Chain devnet.
-pub const ZG_DEVNET_CHAIN_ID: u64 = 16_601;
-
-/// The chain ID for the 0G Chain testnet.
-pub const ZG_TESTNET_CHAIN_ID: u64 = 16_602;
-
-/// The chain ID for the 0G Chain mainnet.
-pub const ZG_MAINNET_CHAIN_ID: u64 = 16_661;
+pub use reth_chainspec::{ZG_DEVNET_CHAIN_ID, ZG_MAINNET_CHAIN_ID, ZG_TESTNET_CHAIN_ID};
 
 /// Minimum gas limit hardfork timestamp for [`ZG_DEVNET_CHAIN_ID`].
 pub const MINIMUM_GAS_LIMIT_FORK_TIMESTAMP_DEVNET: u64 = 0;
@@ -301,11 +294,16 @@ pub fn validate_4844_header_standalone<H: BlockHeader>(
 ///
 /// From yellow paper: extraData: An arbitrary byte array containing data relevant to this block.
 /// This must be 32 bytes or fewer; formally Hx.
+///
+/// Geth exempts the genesis block from this limit (`MaximumExtraDataSize` applies after genesis).
 #[inline]
 pub fn validate_header_extra_data<H: BlockHeader>(
     header: &H,
     max_size: usize,
 ) -> Result<(), ConsensusError> {
+    if header.number() == 0 {
+        return Ok(());
+    }
     let extra_data_len = header.extra_data().len();
     if extra_data_len > max_size {
         Err(ConsensusError::ExtraDataExceedsMax { len: extra_data_len })
@@ -503,6 +501,29 @@ mod tests {
     use reth_ethereum_primitives::{Transaction, TransactionSigned};
     use reth_primitives_traits::proofs;
 
+    #[test]
+    fn genesis_extra_data_may_exceed_max_length() {
+        let header = Header {
+            number: 0,
+            extra_data: Bytes::from(vec![0u8; 117]),
+            ..Default::default()
+        };
+        assert!(validate_header_extra_data(&header, MAXIMUM_EXTRA_DATA_SIZE).is_ok());
+    }
+
+    #[test]
+    fn non_genesis_extra_data_exceeds_max_length() {
+        let header = Header {
+            number: 1,
+            extra_data: Bytes::from(vec![0u8; 117]),
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_header_extra_data(&header, MAXIMUM_EXTRA_DATA_SIZE).unwrap_err(),
+            ConsensusError::ExtraDataExceedsMax { len: 117 }
+        ));
+    }
+
     fn mock_blob_tx(nonce: u64, num_blobs: usize) -> TransactionSigned {
         let mut rng = rand::rng();
         let request = Transaction::Eip4844(TxEip4844 {
@@ -546,6 +567,7 @@ mod tests {
             transactions: vec![transaction],
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
+            slashed: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
