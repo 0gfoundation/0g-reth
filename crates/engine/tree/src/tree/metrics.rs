@@ -15,6 +15,7 @@ use reth_metrics::{
 use reth_primitives_traits::SignedTransaction;
 use reth_trie::updates::TrieUpdates;
 use revm::database::{states::bundle_state::BundleRetention, State};
+use revm::DatabaseCommit;
 use std::time::Instant;
 use tracing::{debug_span, trace};
 
@@ -88,9 +89,19 @@ impl EngineApiMetrics {
             // Harvest the off-trie PerpDEX delta ("PerpState") while the EVM/journal is still
             // alive, before `into_db` consumes it and drops the journal.
             let perp = evm.take_perp_delta();
+            // #16d: fold the block's net delta into the on-trie 0x1003 commitment anchor. The fold
+            // is a journaled `sstore`; since `into_db` only extracts `journaled_state.database` and
+            // drops the journal overlay, `finalize_perp_commitment` drains the write and hands back
+            // the changeset, which we commit into `State<DB>` so it becomes a bundle transition
+            // feeding the state root. `perp` itself still feeds the off-trie canonical-perp merge
+            // below (`perp: Some(perp)`).
+            let perp_commit =
+                evm.finalize_perp_commitment(&perp).map_err(BlockExecutionError::other)?;
+            let mut db = evm.into_db();
+            db.borrow_mut().commit(perp_commit);
             // Pin the error type: the original tail returned `finish().map(..)` (a Result with a
             // known error type); the explicit `Ok` here would otherwise leave it ambiguous.
-            Ok::<_, BlockExecutionError>((evm.into_db(), perp, result))
+            Ok::<_, BlockExecutionError>((db, perp, result))
         };
 
         // Use metered to execute and track timing/gas metrics
