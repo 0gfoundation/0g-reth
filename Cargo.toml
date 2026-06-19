@@ -714,24 +714,24 @@ walkdir = "2.3.3"
 vergen-git2 = "=1.0.5"
 
 [patch.crates-io]
-# PerpState: revm-* + op-revm pinned at revm `perpdex` HEAD (off-trie perp journal +
-# chained commitment; P0–P4 perf + flip-aware margin reservation / formula C);
-# alloy-evm pinned at its perpdex HEAD (Evm::take_perp_delta harvest hook).
-# NOTE: this single top-level [patch.crates-io] revm also overrides alloy-evm's
-# crates.io `revm` dep, so the whole graph resolves to ONE revm at this rev.
-revm = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "revm-database-interface" }
-op-revm = { git = "https://github.com/0gfoundation/revm", rev = "bfa6f1a7cedda42457d343a2689c4d4e7337d608", package = "op-revm" }
+# PerpState #16d: revm-* + op-revm pinned at revm `perpdex-16d-blockend` HEAD (per-block commitment +
+# block-end serialization deferral + finalize_block_commitment); alloy-evm pinned at its
+# `perpdex-16d-blockend` HEAD (Evm::take_perp_delta + Evm::finalize_perp_commitment).
+# NOTE: this single top-level [patch.crates-io] revm also overrides alloy-evm's crates.io `revm` dep,
+# so the whole graph resolves to ONE revm at this rev.
+revm = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "revm-database-interface" }
+op-revm = { git = "https://github.com/0gfoundation/revm", rev = "42f45593d9ac62e30d602adeedceee472787fff2", package = "op-revm" }
 
-alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "f85a3072aa928c18849b9cd326bbaf0e34c85189", package = "alloy-evm" }
+alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "95a4bb11a4130ab9dc44aa7170b9aacf178888a9", package = "alloy-evm" }
 
 # Patch alloy 1.0.35 with 0g-alloy
 alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-consensus" }
