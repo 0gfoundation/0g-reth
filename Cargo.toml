@@ -718,22 +718,25 @@ vergen-git2 = "=1.0.5"
 # commitment + block-end serialization deferral + finalize_block_commitment, flip-aware margin
 # reservation (formula C), cancel-path BBO-refresh-skip, #21 靶子1/2 (in-place level-FIFO +
 # order-list mutation via perp_get_struct_mut) and #21 靶子3-A (dual-cover reservation scan,
-# 6 passes→3); all byte-identical. alloy-evm stays
+# 6 passes→3); all byte-identical. PLUS the off-by-default perp-parallel spike (revm branch
+# perpdex-parallel): step 0 feature-flag scaffold + step 1 SharedPerpBook concurrent overlay
+# substrate, gated behind `perp-parallel` which is OFF here → serial path byte-identical, nothing
+# wired yet (this pin is for a server no-regression run of the serial path). alloy-evm stays
 # pinned at its `perpdex-16d-blockend` HEAD (Evm::take_perp_delta + Evm::finalize_perp_commitment),
 # whose API matches this revm.
 # NOTE: this single top-level [patch.crates-io] revm also overrides alloy-evm's crates.io `revm` dep,
 # so the whole graph resolves to ONE revm at this rev.
-revm = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "revm-database-interface" }
-op-revm = { git = "https://github.com/0gfoundation/revm", rev = "d78cf1ee03cfed0206d48675a7399e0c93be80fe", package = "op-revm" }
+revm = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "revm-database-interface" }
+op-revm = { git = "https://github.com/0gfoundation/revm", rev = "71e1ffc00c366899cb99386199442a029e175ae0", package = "op-revm" }
 
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "06cbe7b7600885e51a5246d995b410cabaae718d", package = "alloy-evm" }
 
