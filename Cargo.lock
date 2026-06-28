@@ -11067,6 +11067,7 @@ source = "git+https://github.com/0gfoundation/revm?rev=68def0d058c54af31fc0dc23b
 dependencies = [
  "bitvec",
  "cfg-if",
+ "dashmap 6.1.0",
  "derive-where",
  "revm-bytecode",
  "revm-context-interface",

@@ -460,7 +460,11 @@ reth-ress-protocol = { path = "crates/ress/protocol" }
 reth-ress-provider = { path = "crates/ress/provider" }
 
 # revm
-revm = { version = "29.0.1", default-features = false }
+# perp-parallel enables the off-trie parallel place/cancel engine (catalog #21 step 4b): the
+# replay-mode precompile + classify_perp_tx + transact_block_parallel the engine-tree node
+# orchestration calls. Additive + runtime-gated (inert unless set_perp_shared/set_perp_replay are
+# called), so the serial path is byte-identical; cascades to precompile/perp-parallel + context/perp-parallel.
+revm = { version = "29.0.1", default-features = false, features = ["perp-parallel"] }
 revm-bytecode = { version = "6.2.2", default-features = false }
 revm-database = { version = "7.0.5", default-features = false }
 revm-state = { version = "7.0.5", default-features = false }
