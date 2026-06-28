@@ -48,7 +48,7 @@ use revm::context::{BlockEnv, CfgEnv, Context, ContextTr, Journal, TxEnv};
 use revm::context_interface::journaled_state::PerpReplayResult;
 use revm::database::EmptyDB;
 use revm::precompile::perp_dex::parallel::{
-    classify_perp_tx, transact_block_parallel, CancelOutcome, OpResult, PerpOp, PerpTxClass,
+    classify_perp_tx, transact_block_parallel_logged, CancelOutcome, OpResult, PerpOp, PerpTxClass,
     PlaceOutcome,
 };
 use revm::precompile::perp_dex::PERP_DEX_ADDRESS;
@@ -814,29 +814,35 @@ where
         }
 
         // Parallel matching against the shared book (the segmented driver: parallel batches with the
-        // contagion floor run serially in place). Results are in `ops` (= txn_id) order.
-        let results = transact_block_parallel(self.perp_pool.as_ref(), &book, &ops, make_ctx)
+        // contagion floor run serially in place). Results are in `ops` (= txn_id) order, each carrying
+        // the EVM logs its matching emitted (the `_logged` variant — the matching runs in throwaway
+        // contexts, so the driver drains each op's logs here for the replay to re-emit).
+        let results = transact_block_parallel_logged(self.perp_pool.as_ref(), &book, &ops, make_ctx)
             .map_err(BlockExecutionError::other)?;
 
-        // Build the replay vec in block order (one entry per trading tx).
+        // Build the replay vec in block order (one entry per trading tx). Each carries the captured
+        // logs so the serial replay re-emits the same perp events as serial execution.
         let replay = slots
             .into_iter()
             .map(|slot| match slot {
                 Slot::Trade { op_index, success_output } => {
+                    let op = &results[op_index];
                     let executed = matches!(
-                        results[op_index],
+                        op.result,
                         OpResult::Place(PlaceOutcome::Executed)
                             | OpResult::Cancel(CancelOutcome::Executed)
                     );
-                    if executed {
-                        PerpReplayResult { reverted: false, output: success_output }
-                    } else {
-                        // Driver reverted (margin / crossing PostOnly / not-cancellable). Return data
-                        // is not in the receipts root, so an empty revert is consensus-safe.
-                        PerpReplayResult { reverted: true, output: Vec::new() }
+                    PerpReplayResult {
+                        // Driver-reverted (margin / crossing PostOnly / not-cancellable): empty output
+                        // (return data is not in the receipts root) + empty logs (rolled back).
+                        reverted: !executed,
+                        output: if executed { success_output } else { Vec::new() },
+                        logs: op.logs.clone(),
                     }
                 }
-                Slot::Reject { output } => PerpReplayResult { reverted: true, output },
+                Slot::Reject { output } => {
+                    PerpReplayResult { reverted: true, output, logs: Vec::new() }
+                }
             })
             .collect();
         Ok((replay, Some(book)))
