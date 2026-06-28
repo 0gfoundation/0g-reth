@@ -42,8 +42,21 @@ use reth_provider::{
 use reth_revm::db::State;
 use reth_revm::database::{PerpDb, PerpHandle};
 // Off-trie PerpDEX parallel place/cancel engine (catalog #21 step 4b). Gated on revm's perp-parallel
-// feature (enabled in the workspace); the orchestration lives in `execute_block`.
-use revm::context::journal::perp_pool::PerpPool;
+// feature (enabled in the workspace); the orchestration lives in `execute_block` / `perp_parallel_prephase`.
+use revm::context::journal::{perp_pool::PerpPool, shared_perp::SharedPerpBook};
+use revm::context::{BlockEnv, CfgEnv, Context, ContextTr, Journal, TxEnv};
+use revm::context_interface::journaled_state::PerpReplayResult;
+use revm::database::EmptyDB;
+use revm::precompile::perp_dex::parallel::{
+    classify_perp_tx, transact_block_parallel, CancelOutcome, OpResult, PerpOp, PerpTxClass,
+    PlaceOutcome,
+};
+use revm::precompile::perp_dex::PERP_DEX_ADDRESS;
+use revm::primitives::hardfork::SpecId;
+// Trait methods for classifying perp txs: `.to()`/`.input()` (alloy Transaction) on the signed tx,
+// `.tx()`/`.signer()` (alloy_evm RecoveredTx) on the executable tx.
+use alloy_consensus::Transaction as _;
+use alloy_evm::RecoveredTx as _;
 use reth_trie::{updates::TrieUpdates, HashedPostState, KeccakKeyHasher, TrieInput};
 use reth_trie_db::DatabaseHashedPostState;
 use reth_trie_parallel::root::{ParallelStateRoot, ParallelStateRootError};
@@ -716,6 +729,119 @@ where
         Ok(())
     }
 
+    /// Step-4b parallel PerpDEX pre-phase: classify the block's top-level `0x…1003` trading calls
+    /// SERIALLY (decode + verify, NO matching), run them through the parallel driver against a fresh
+    /// shared book, and build the replay vec the serial EVM pass replays. Returns the per-trading-tx
+    /// replay results (block order) + the shared book holding the net off-trie delta. A block with no
+    /// perp trading txs returns `(empty, None)` → the caller runs the plain serial path.
+    fn perp_parallel_prephase<T>(
+        &self,
+        input: &BlockOrPayload<T>,
+        block_env: &BlockEnv,
+        perp: &PerpHandle,
+    ) -> Result<(Vec<PerpReplayResult>, Option<Arc<SharedPerpBook>>), InsertBlockErrorKind>
+    where
+        V: PayloadValidator<T, Block = N::Block>,
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
+        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
+    {
+        let book = Arc::new(SharedPerpBook::new());
+        let block_env = block_env.clone();
+        let perp_for_ctx = perp.clone();
+        // Per-slot context factory: a perp-only cold-read DB (matching never touches EVM accounts, so
+        // EmptyDB suffices; perp reads resolve through the canonical_perp handle) + the block env +
+        // the shared book. The EVM spec is irrelevant to perp matching, so a fixed default is used.
+        // The concrete per-slot context type (annotated so closure return-type inference succeeds).
+        type PerpSlotCtx = Context<
+            BlockEnv,
+            TxEnv,
+            CfgEnv,
+            PerpDb<EmptyDB>,
+            Journal<PerpDb<EmptyDB>>,
+            (),
+        >;
+        let make_ctx = move |book: Arc<SharedPerpBook>| -> PerpSlotCtx {
+            let db = PerpDb::new(EmptyDB::default(), Some(perp_for_ctx.clone()));
+            let mut ctx: PerpSlotCtx = Context::new(db, SpecId::default());
+            ctx.block = block_env.clone();
+            ctx.journal_mut().set_perp_shared(book);
+            ctx
+        };
+
+        // Classify each top-level 0x…1003 trading call SERIALLY. A `Trade` feeds the driver (its
+        // replay result is filled from the driver outcome below); a `Reject` is replayed as a revert
+        // now; non-trading / non-perp calls are skipped (they run normally in the serial EVM pass).
+        enum Slot {
+            Trade { op_index: usize, success_output: Vec<u8> },
+            Reject { output: Vec<u8> },
+        }
+        let mut classify_ctx = make_ctx(book.clone());
+        let mut ops: Vec<PerpOp> = Vec::new();
+        let mut slots: Vec<Slot> = Vec::new();
+        // A NON-trading 0x1003 call (deposit / withdraw / addMargin / liquidate / updateIndexPrice /
+        // …) can change state a later trade depends on (e.g. margin). The parallel pre-phase runs ALL
+        // trades upfront against committed state, so it cannot honor an intra-block dependency on such
+        // a call. Rather than mis-order, we FALL BACK to full serial for any block containing one (the
+        // relayer's trade-only batches still parallelize; mixed blocks stay serial → byte-identical).
+        let mut saw_non_trading_perp = false;
+        for tx_res in self
+            .tx_iterator_for(input)
+            .map_err(|e| InsertBlockErrorKind::Other(Box::new(e)))?
+        {
+            let item = tx_res.map_err(BlockExecutionError::other)?;
+            let signed = item.tx();
+            if signed.to() != Some(PERP_DEX_ADDRESS) {
+                continue;
+            }
+            let calldata = signed.input().to_vec();
+            let signer = *item.signer();
+            match classify_perp_tx(&calldata, signer, &mut classify_ctx)
+                .map_err(BlockExecutionError::other)?
+            {
+                PerpTxClass::Trade { op, success_output } => {
+                    let op_index = ops.len();
+                    ops.push(op);
+                    slots.push(Slot::Trade { op_index, success_output });
+                }
+                PerpTxClass::Reject { output } => slots.push(Slot::Reject { output }),
+                // A 0x1003 call that is not a trading selector → a non-trading perp call.
+                PerpTxClass::NotTrading => saw_non_trading_perp = true,
+            }
+        }
+        // No trades to parallelize, or a non-trading perp call present → run the plain serial path.
+        if slots.is_empty() || saw_non_trading_perp {
+            return Ok((Vec::new(), None));
+        }
+
+        // Parallel matching against the shared book (the segmented driver: parallel batches with the
+        // contagion floor run serially in place). Results are in `ops` (= txn_id) order.
+        let results = transact_block_parallel(self.perp_pool.as_ref(), &book, &ops, make_ctx)
+            .map_err(BlockExecutionError::other)?;
+
+        // Build the replay vec in block order (one entry per trading tx).
+        let replay = slots
+            .into_iter()
+            .map(|slot| match slot {
+                Slot::Trade { op_index, success_output } => {
+                    let executed = matches!(
+                        results[op_index],
+                        OpResult::Place(PlaceOutcome::Executed)
+                            | OpResult::Cancel(CancelOutcome::Executed)
+                    );
+                    if executed {
+                        PerpReplayResult { reverted: false, output: success_output }
+                    } else {
+                        // Driver reverted (margin / crossing PostOnly / not-cancellable). Return data
+                        // is not in the receipts root, so an empty revert is consensus-safe.
+                        PerpReplayResult { reverted: true, output: Vec::new() }
+                    }
+                }
+                Slot::Reject { output } => PerpReplayResult { reverted: true, output },
+            })
+            .collect();
+        Ok((replay, Some(book)))
+    }
+
     /// Executes a block with the given state provider
     fn execute_block<S, Err, T>(
         &mut self,
@@ -739,6 +865,13 @@ where
         let span = debug_span!(target: "engine::tree", "execute_block", num = ?num_hash.number, hash = ?num_hash.hash);
         let _enter = span.enter();
         debug!(target: "engine::tree", "Executing block");
+
+        // Step 4b: parallel PerpDEX pre-phase — classify + match this block's trading calls against a
+        // shared book BEFORE the serial EVM pass, which then REPLAYS the pre-computed results. `perp`
+        // is borrowed here (it is moved into `PerpDb` below). `(empty, None)` for a block with no perp
+        // trades → the serial path runs unchanged.
+        let (perp_replay, perp_book) =
+            self.perp_parallel_prephase(input, &env.evm_env.block_env, &perp)?;
 
         let mut db = State::builder()
             .with_database(PerpDb::new(StateProviderDatabase::new(&state_provider), Some(perp)))
@@ -773,6 +906,8 @@ where
             executor,
             handle.iter_transactions().map(|res| res.map_err(BlockExecutionError::other)),
             state_hook,
+            perp_replay,
+            perp_book,
         )?;
         let execution_finish = Instant::now();
         let execution_time = execution_finish.duration_since(execution_start);

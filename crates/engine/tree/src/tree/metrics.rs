@@ -14,8 +14,11 @@ use reth_metrics::{
 };
 use reth_primitives_traits::SignedTransaction;
 use reth_trie::updates::TrieUpdates;
+use revm::context::journal::shared_perp::SharedPerpBook;
+use revm::context_interface::journaled_state::PerpReplayResult;
 use revm::database::{states::bundle_state::BundleRetention, State};
 use revm::DatabaseCommit;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug_span, trace};
 
@@ -63,6 +66,11 @@ impl EngineApiMetrics {
         executor: E,
         transactions: impl Iterator<Item = Result<impl ExecutableTx<E>, BlockExecutionError>>,
         state_hook: Box<dyn OnStateHook>,
+        // Step 4b parallel PerpDEX path: the pre-computed trading-call results the 0x1003 precompile
+        // replays in block order during this serial pass, + the shared book holding the net off-trie
+        // delta. `(empty, None)` for the plain serial path (no parallelized perp trades).
+        perp_replay: Vec<PerpReplayResult>,
+        perp_book: Option<Arc<SharedPerpBook>>,
     ) -> Result<BlockExecutionOutput<E::Receipt>, BlockExecutionError>
     where
         DB: alloy_evm::Database,
@@ -77,6 +85,14 @@ impl EngineApiMetrics {
 
         let f = || {
             executor.apply_pre_execution_changes()?;
+            // Step 4b: in the parallel path, hand the journal the pre-computed trading results before
+            // executing — the 0x1003 precompile replays them in block order during this serial pass
+            // instead of re-verifying/re-matching. Skipped for the serial path (keeps it in non-replay
+            // mode). A parallelized block contains NO non-trading perp tx (the pre-phase falls back to
+            // serial otherwise), so the serial pass writes NO perp state → the book holds the delta.
+            if perp_book.is_some() {
+                executor.evm_mut().set_perp_replay(perp_replay);
+            }
             for tx in transactions {
                 let tx = tx?;
                 let span =
@@ -86,9 +102,13 @@ impl EngineApiMetrics {
                 executor.execute_transaction(tx)?;
             }
             let (mut evm, result) = executor.finish()?;
-            // Harvest the off-trie PerpDEX delta ("PerpState") while the EVM/journal is still
-            // alive, before `into_db` consumes it and drops the journal.
-            let perp = evm.take_perp_delta();
+            // Harvest the off-trie PerpDEX delta ("PerpState") while the EVM/journal is still alive,
+            // before `into_db` consumes it. In the parallel path the delta lives in the pre-phase's
+            // shared book (the journal saw only replayed trades → empty); else it is in the journal.
+            let perp = match &perp_book {
+                Some(book) => book.take_delta(),
+                None => evm.take_perp_delta(),
+            };
             // #16d: fold the block's net delta into the on-trie 0x1003 commitment anchor. The fold
             // is a journaled `sstore`; since `into_db` only extracts `journaled_state.database` and
             // drops the journal overlay, `finalize_perp_commitment` drains the write and hands back
