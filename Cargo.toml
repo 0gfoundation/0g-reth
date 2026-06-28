@@ -722,25 +722,29 @@ vergen-git2 = "=1.0.5"
 # perpdex-parallel): step 0 feature-flag scaffold + step 1 SharedPerpBook + step 2 scheduler
 # primitives + step 3a closure perp-overlay API (a BYTE-IDENTICAL refactor of the SERIAL precompile
 # path — golden unchanged) + step 3b SharedPerpBook routing + step 3c parallel place AND cancel
-# drivers (BookSideLock atomicity, PriceCompletion best-price-cancel wait, byte-identity differential
-# gates, adversarial-review hardening). `perp-parallel` is STILL OFF here → serial path byte-identical;
-# step 3d (block driver / barrier / reth seam) is next. This pin lets the server run a no-regression
-# serial check AND the parallel unit + differential tests via `--features perp-parallel`. alloy-evm stays
+# drivers + step 3d the UNIFIED block driver transact_block_parallel (3 phases: serial pre-scan →
+# parallel place+cancel under one AccountGate+BookSideLock+BboTicketLock+PriceCompletion → serial
+# barrier: FIFO finalize + downgrade re-run in txn_id order + block-end mid sample). Taker contagion,
+# emptying-cancel-sets-floor (design C), Fatal propagation, driver-owned rank/ticket; two rounds of
+# adversarial review (place/cancel + design C) hardened. `perp-parallel` is STILL OFF here → serial
+# path byte-identical; the reth seam (wire the driver in + EVM envelope + D3-b serial alignment +
+# golden re-pin) is the next step. This pin lets the server run a no-regression serial check AND the
+# parallel unit + differential tests via `--features perp-parallel`. alloy-evm stays
 # pinned at its `perpdex-16d-blockend` HEAD (Evm::take_perp_delta + Evm::finalize_perp_commitment),
 # whose API matches this revm.
 # NOTE: this single top-level [patch.crates-io] revm also overrides alloy-evm's crates.io `revm` dep,
 # so the whole graph resolves to ONE revm at this rev.
-revm = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "revm-database-interface" }
-op-revm = { git = "https://github.com/0gfoundation/revm", rev = "eb2b974063e1ff2d8d7d5456cc60ed745ce4ed35", package = "op-revm" }
+revm = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "revm-database-interface" }
+op-revm = { git = "https://github.com/0gfoundation/revm", rev = "6f035f551c1a5ee138c14737570cd08e14bb6336", package = "op-revm" }
 
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "06cbe7b7600885e51a5246d995b410cabaae718d", package = "alloy-evm" }
 
