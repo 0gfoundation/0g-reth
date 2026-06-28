@@ -41,6 +41,9 @@ use reth_provider::{
 };
 use reth_revm::db::State;
 use reth_revm::database::{PerpDb, PerpHandle};
+// Off-trie PerpDEX parallel place/cancel engine (catalog #21 step 4b). Gated on revm's perp-parallel
+// feature (enabled in the workspace); the orchestration lives in `execute_block`.
+use revm::context::journal::perp_pool::PerpPool;
 use reth_trie::{updates::TrieUpdates, HashedPostState, KeccakKeyHasher, TrieInput};
 use reth_trie_db::DatabaseHashedPostState;
 use reth_trie_parallel::root::{ParallelStateRoot, ParallelStateRootError};
@@ -162,6 +165,9 @@ where
     metrics: EngineApiMetrics,
     /// Validator for the payload.
     validator: V,
+    /// Persistent FIFO worker pool for the parallel PerpDEX place/cancel pre-phase (catalog #21 step
+    /// 4b), reused across every block. `Arc` so the validator stays cheap to clone.
+    perp_pool: Arc<PerpPool>,
 }
 
 impl<N, P, Evm, V> BasicEngineValidator<P, Evm, V>
@@ -193,6 +199,10 @@ where
             &config,
             precompile_cache_map.clone(),
         );
+        // One persistent worker pool for the parallel PerpDEX pre-phase, sized to the machine.
+        let perp_pool = Arc::new(PerpPool::new(
+            std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8),
+        ));
         Self {
             provider,
             consensus,
@@ -204,6 +214,7 @@ where
             invalid_block_hook,
             metrics: EngineApiMetrics::default(),
             validator,
+            perp_pool,
         }
     }
 
