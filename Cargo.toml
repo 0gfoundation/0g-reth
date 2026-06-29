@@ -739,30 +739,35 @@ vergen-git2 = "=1.0.5"
 # NOTE: this single top-level [patch.crates-io] revm also overrides alloy-evm's crates.io `revm` dep,
 # so the whole graph resolves to ONE revm at this rev.
 #
-# BUMPED 2026-06-29 → revm 58d6c12a (perpdex-parallel HEAD). On top of the step-4b canonical wiring
-# + M4 server validation (parallel-correctness-battery ALL_PASS, finalize per-tx replay-wipe fix),
-# this adds the per-level PARALLEL-PERF redesign that fixes the measured parallel-slower-than-serial
-# regression — all three phases differential byte-identical to serial:
+# BUMPED 2026-06-30 → revm 90ddb6af (perpdex-parallel HEAD): the TICK_WALK_CAP correctness fix on top
+# of the per-level PARALLEL-PERF redesign (Phases 1-3). All differential byte-identical to serial:
 #   Phase 1 (4748af8d): drop the sorted bid/ask price Vec → tick-walk book discovery
-#     (next_ask_at_or_above / next_bid_at_or_below, TICK_WALK_CAP=4096). This BUMPS the commitment
+#     (next_ask_at_or_above / next_bid_at_or_below). This BUMPED the commitment
 #     BLOCK_COMMITMENT_VERSION 3→4 (golden re-pinned 0xa4f990da; BusinessSnapshot unchanged).
 #   Phase 2 (26ec7cc4): BookSideLock re-keyed per-(market,side) → per-(market,side,price) so
 #     different-price / different-user place+cancel run concurrent (same-price stays serial).
 #   Phase 3 (58d6c12a): route the journal's struct methods to SharedPerpBook's struct API under
 #     perp_shared → recovers the in-place struct fast-path + single block-end serialization in the
 #     parallel path (was eager-serializing per op); box type unified to Box<dyn Any + Send + Sync>.
-# >>> commitment is now v4: deploying this pin requires a devnet WIPE (dev posture). <<<
-revm = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "revm-database-interface" }
-op-revm = { git = "https://github.com/0gfoundation/revm", rev = "58d6c12aa563b40fd98205fbc699f28721923390", package = "op-revm" }
+#   CAP FIX (90ddb6af): the Phase-1 tick-walk capped its scan at 4096 ticks and reported far levels as
+#     EMPTY → on a sparse/wide book (realisticMix) takers stopped early, best zeroed, far levels
+#     orphaned → cross-level wrong fills + non-conservation (server perpdex-parallel-fail-f9e3c6b37).
+#     Now UNBOUNDED (ask→max_price, bid→tick floor). Serial repro taker_sweeps_across_wide_gap; serial
+#     132/0, perp-parallel 162/0 differential. commitment UNCHANGED (still v4 — golden 0xa4f990da, the
+#     scenario's gaps are < the old cap), so this bump needs NO fresh re-pin.
+# >>> commitment is v4 (unchanged since the 58d6c12a pin): deploying from a pre-v4 chain needs a WIPE;
+# >>> from the prior v4 pin this is a drop-in cap fix. <<<
+revm = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-database-interface" }
+op-revm = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "op-revm" }
 
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "3cd26846c2ea72be7d7609839168c9275143187b", package = "alloy-evm" }
 
