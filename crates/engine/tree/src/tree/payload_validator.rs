@@ -821,77 +821,15 @@ where
             return Ok((Vec::new(), None));
         }
 
-        // DEBUG AUDIT (env PERP_PARALLEL_AUDIT): re-run THIS block's ops on FRESH books against the
-        // SAME cold-read — once parallel, once serial — and log any divergence in committed state or
-        // per-op events, dumping the ops for an exact revm reproduction. Localizes the residual
-        // matchingPair race (proven NOT in the revm driver given equal inputs; this checks whether the
-        // node's real cold-read + classified ops still match serial). Off by default; an extra pair of
-        // runs when on. Runs BEFORE the real run so `make_ctx` is still available (cloned here).
-        if std::env::var_os("PERP_PARALLEL_AUDIT").is_some() {
-            let pa_book = Arc::new(SharedPerpBook::new());
-            let sa_book = Arc::new(SharedPerpBook::new());
-            let pa = transact_block_parallel_logged(
-                self.perp_pool.as_ref(),
-                &pa_book,
-                &ops,
-                make_ctx.clone(),
-            );
-            let sa = transact_block_serial(&sa_book, &ops, make_ctx.clone());
-            match (pa, sa) {
-                (Ok(pr), Ok(sr)) => {
-                    let pd = pa_book.take_delta();
-                    let sd = sa_book.take_delta();
-                    let plogs: Vec<_> = pr.iter().map(|r| r.logs.clone()).collect();
-                    let slogs: Vec<_> = sr.iter().map(|r| r.logs.clone()).collect();
-                    let state_diff = pd != sd;
-                    let logs_diff = plogs != slogs;
-                    if state_diff || logs_diff {
-                        error!(
-                            target: "perp::audit",
-                            block = ?block_number,
-                            n_ops = ops.len(),
-                            state_diff,
-                            logs_diff,
-                            "PERP PARALLEL AUDIT DIVERGENCE — parallel != serial; ops + diverging keys follow"
-                        );
-                        for (i, op) in ops.iter().enumerate() {
-                            error!(target: "perp::audit", block = ?block_number, i, op = ?op, "audit op");
-                        }
-                        // Dump every diverging state key with hex of parallel / serial / cold-read values,
-                        // so the exact divergence (which key, what bytes, what it started as) is captured.
-                        let hexs = |v: &[u8]| v.iter().map(|b| format!("{b:02x}")).collect::<String>();
-                        let all: std::collections::BTreeSet<_> =
-                            pd.keys().chain(sd.keys()).copied().collect();
-                        for k in all {
-                            let pv = pd.get(&k).map(|v| v.as_slice()).unwrap_or(&[]);
-                            let sv = sd.get(&k).map(|v| v.as_slice()).unwrap_or(&[]);
-                            if pv != sv {
-                                let cv = perp.perp_get(k);
-                                error!(
-                                    target: "perp::audit",
-                                    block = ?block_number,
-                                    key = %hexs(k.as_slice()),
-                                    parallel = %hexs(pv),
-                                    serial = %hexs(sv),
-                                    cold_read = %hexs(&cv),
-                                    "DIVERGING KEY"
-                                );
-                            }
-                        }
-                        if logs_diff {
-                            error!(target: "perp::audit", block = ?block_number, parallel_logs = ?plogs, serial_logs = ?slogs, "DIVERGING LOGS");
-                        }
-                    }
-                }
-                (pa, sa) => error!(
-                    target: "perp::audit",
-                    block = ?block_number,
-                    parallel_err = ?pa.err(),
-                    serial_err = ?sa.err(),
-                    "PERP PARALLEL AUDIT — a run errored"
-                ),
-            }
-        }
+        // DEBUG AUDIT (env PERP_PARALLEL_AUDIT): capture a make_ctx clone NOW (before the real run
+        // consumes make_ctx). After the real run we re-run the SAME ops SERIALLY and compare the REAL
+        // run's captured per-op logs — exactly what phase B re-emits → what the verifier sees — against
+        // serial. Comparing the REAL `results` (not a fresh re-run) catches a node-specific
+        // non-determinism in the real parallel run that a fresh re-run might not reproduce. Off by
+        // default.
+        let audit_make = std::env::var_os("PERP_PARALLEL_AUDIT")
+            .is_some()
+            .then(|| make_ctx.clone());
 
         // Parallel matching against the shared book (the segmented driver: parallel batches with the
         // contagion floor run serially in place). Results are in `ops` (= txn_id) order, each carrying
@@ -899,6 +837,47 @@ where
         // contexts, so the driver drains each op's logs here for the replay to re-emit).
         let results = transact_block_parallel_logged(self.perp_pool.as_ref(), &book, &ops, make_ctx)
             .map_err(BlockExecutionError::other)?;
+
+        // AUDIT: compare the REAL run's captured per-op logs against a serial re-run (same cold-read).
+        // These logs are what phase B re-emits, so a divergence here = the parallel node's events
+        // differ from serial → the bug. Dumps the diverging ops + per-op log counts.
+        if let Some(make) = audit_make {
+            let sa_book = Arc::new(SharedPerpBook::new());
+            match transact_block_serial(&sa_book, &ops, make) {
+                Ok(sr) => {
+                    let plogs: Vec<_> = results.iter().map(|r| r.logs.clone()).collect();
+                    let slogs: Vec<_> = sr.iter().map(|r| r.logs.clone()).collect();
+                    if plogs != slogs {
+                        error!(
+                            target: "perp::audit",
+                            block = ?block_number,
+                            n_ops = ops.len(),
+                            "REAL-RUN PERP LOGS DIVERGE FROM SERIAL — ops follow"
+                        );
+                        for (i, op) in ops.iter().enumerate() {
+                            let pl = plogs.get(i);
+                            let sl = slogs.get(i);
+                            error!(
+                                target: "perp::audit",
+                                block = ?block_number,
+                                i,
+                                op = ?op,
+                                diff = (pl != sl),
+                                parallel_logs = ?pl,
+                                serial_logs = ?sl,
+                                "audit op"
+                            );
+                        }
+                    }
+                }
+                Err(e) => error!(
+                    target: "perp::audit",
+                    block = ?block_number,
+                    err = ?e,
+                    "PERP AUDIT serial re-run errored"
+                ),
+            }
+        }
 
         // Build the replay vec in block order (one entry per trading tx). Each carries the captured
         // logs so the serial replay re-emits the same perp events as serial execution.
