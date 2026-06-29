@@ -212,10 +212,24 @@ where
             &config,
             precompile_cache_map.clone(),
         );
-        // One persistent worker pool for the parallel PerpDEX pre-phase, sized to the machine.
-        let perp_pool = Arc::new(PerpPool::new(
-            std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8),
-        ));
+        // One persistent worker pool for the parallel PerpDEX pre-phase. `available_parallelism()` is
+        // LOGICAL cores (2x physical on an HT box), and the pre-phase is CPU-bound matching/classify
+        // that competes with reth's main block-exec thread + tokio + DB — so sizing the pool to all
+        // logical cores OVERSUBSCRIBES the physical cores (measured: a perp-free `simple` baseline
+        // regressed ~10% purely from the resident pool). Default to half the logical count (≈ physical
+        // cores, leaving headroom); override with PERP_POOL_THREADS to sweep the optimum on a box.
+        let perp_pool_threads = std::env::var("PERP_POOL_THREADS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&n| n >= 1)
+            .unwrap_or_else(|| {
+                (std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(8)
+                    / 2)
+                .max(1)
+            });
+        let perp_pool = Arc::new(PerpPool::new(perp_pool_threads));
         Self {
             provider,
             consensus,
