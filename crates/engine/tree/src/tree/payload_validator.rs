@@ -839,27 +839,40 @@ where
                     let state_diff = pd != sd;
                     let logs_diff = plogs != slogs;
                     if state_diff || logs_diff {
-                        let n_keys = pd
-                            .keys()
-                            .chain(sd.keys())
-                            .collect::<std::collections::BTreeSet<_>>()
-                            .into_iter()
-                            .filter(|k| {
-                                pd.get(*k).map(|v| v.as_slice()).unwrap_or(&[])
-                                    != sd.get(*k).map(|v| v.as_slice()).unwrap_or(&[])
-                            })
-                            .count();
                         error!(
                             target: "perp::audit",
                             block = ?block_number,
                             n_ops = ops.len(),
                             state_diff,
                             logs_diff,
-                            diverging_keys = n_keys,
-                            "PERP PARALLEL AUDIT DIVERGENCE — parallel != serial; ops follow"
+                            "PERP PARALLEL AUDIT DIVERGENCE — parallel != serial; ops + diverging keys follow"
                         );
                         for (i, op) in ops.iter().enumerate() {
                             error!(target: "perp::audit", block = ?block_number, i, op = ?op, "audit op");
+                        }
+                        // Dump every diverging state key with hex of parallel / serial / cold-read values,
+                        // so the exact divergence (which key, what bytes, what it started as) is captured.
+                        let hexs = |v: &[u8]| v.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                        let all: std::collections::BTreeSet<_> =
+                            pd.keys().chain(sd.keys()).copied().collect();
+                        for k in all {
+                            let pv = pd.get(&k).map(|v| v.as_slice()).unwrap_or(&[]);
+                            let sv = sd.get(&k).map(|v| v.as_slice()).unwrap_or(&[]);
+                            if pv != sv {
+                                let cv = perp.perp_get(k);
+                                error!(
+                                    target: "perp::audit",
+                                    block = ?block_number,
+                                    key = %hexs(k.as_slice()),
+                                    parallel = %hexs(pv),
+                                    serial = %hexs(sv),
+                                    cold_read = %hexs(&cv),
+                                    "DIVERGING KEY"
+                                );
+                            }
+                        }
+                        if logs_diff {
+                            error!(target: "perp::audit", block = ?block_number, parallel_logs = ?plogs, serial_logs = ?slogs, "DIVERGING LOGS");
                         }
                     }
                 }
