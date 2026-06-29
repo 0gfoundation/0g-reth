@@ -48,8 +48,8 @@ use revm::context::{BlockEnv, CfgEnv, Context, ContextTr, Journal, TxEnv};
 use revm::context_interface::journaled_state::PerpReplayResult;
 use revm::database::EmptyDB;
 use revm::precompile::perp_dex::parallel::{
-    classify_perp_tx, transact_block_parallel_logged, CancelOutcome, OpResult, PerpOp, PerpTxClass,
-    PlaceOutcome,
+    classify_perp_tx, transact_block_parallel_logged, transact_block_serial, CancelOutcome,
+    OpResult, PerpOp, PerpTxClass, PlaceOutcome,
 };
 use revm::precompile::perp_dex::PERP_DEX_ADDRESS;
 use revm::primitives::hardfork::SpecId;
@@ -747,6 +747,7 @@ where
     {
         let book = Arc::new(SharedPerpBook::new());
         let block_env = block_env.clone();
+        let block_number = block_env.number; // captured before make_ctx moves block_env (audit logging)
         let perp_for_ctx = perp.clone();
         // Per-slot context factory: a perp-only cold-read DB (matching never touches EVM accounts, so
         // EmptyDB suffices; perp reads resolve through the canonical_perp handle) + the block env +
@@ -811,6 +812,65 @@ where
         // No trades to parallelize, or a non-trading perp call present → run the plain serial path.
         if slots.is_empty() || saw_non_trading_perp {
             return Ok((Vec::new(), None));
+        }
+
+        // DEBUG AUDIT (env PERP_PARALLEL_AUDIT): re-run THIS block's ops on FRESH books against the
+        // SAME cold-read — once parallel, once serial — and log any divergence in committed state or
+        // per-op events, dumping the ops for an exact revm reproduction. Localizes the residual
+        // matchingPair race (proven NOT in the revm driver given equal inputs; this checks whether the
+        // node's real cold-read + classified ops still match serial). Off by default; an extra pair of
+        // runs when on. Runs BEFORE the real run so `make_ctx` is still available (cloned here).
+        if std::env::var_os("PERP_PARALLEL_AUDIT").is_some() {
+            let pa_book = Arc::new(SharedPerpBook::new());
+            let sa_book = Arc::new(SharedPerpBook::new());
+            let pa = transact_block_parallel_logged(
+                self.perp_pool.as_ref(),
+                &pa_book,
+                &ops,
+                make_ctx.clone(),
+            );
+            let sa = transact_block_serial(&sa_book, &ops, make_ctx.clone());
+            match (pa, sa) {
+                (Ok(pr), Ok(sr)) => {
+                    let pd = pa_book.take_delta();
+                    let sd = sa_book.take_delta();
+                    let plogs: Vec<_> = pr.iter().map(|r| r.logs.clone()).collect();
+                    let slogs: Vec<_> = sr.iter().map(|r| r.logs.clone()).collect();
+                    let state_diff = pd != sd;
+                    let logs_diff = plogs != slogs;
+                    if state_diff || logs_diff {
+                        let n_keys = pd
+                            .keys()
+                            .chain(sd.keys())
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .into_iter()
+                            .filter(|k| {
+                                pd.get(*k).map(|v| v.as_slice()).unwrap_or(&[])
+                                    != sd.get(*k).map(|v| v.as_slice()).unwrap_or(&[])
+                            })
+                            .count();
+                        error!(
+                            target: "perp::audit",
+                            block = ?block_number,
+                            n_ops = ops.len(),
+                            state_diff,
+                            logs_diff,
+                            diverging_keys = n_keys,
+                            "PERP PARALLEL AUDIT DIVERGENCE — parallel != serial; ops follow"
+                        );
+                        for (i, op) in ops.iter().enumerate() {
+                            error!(target: "perp::audit", block = ?block_number, i, op = ?op, "audit op");
+                        }
+                    }
+                }
+                (pa, sa) => error!(
+                    target: "perp::audit",
+                    block = ?block_number,
+                    parallel_err = ?pa.err(),
+                    serial_err = ?sa.err(),
+                    "PERP PARALLEL AUDIT — a run errored"
+                ),
+            }
         }
 
         // Parallel matching against the shared book (the segmented driver: parallel batches with the
