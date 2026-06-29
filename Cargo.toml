@@ -739,8 +739,9 @@ vergen-git2 = "=1.0.5"
 # NOTE: this single top-level [patch.crates-io] revm also overrides alloy-evm's crates.io `revm` dep,
 # so the whole graph resolves to ONE revm at this rev.
 #
-# BUMPED 2026-06-30 → revm 90ddb6af (perpdex-parallel HEAD): the TICK_WALK_CAP correctness fix on top
-# of the per-level PARALLEL-PERF redesign (Phases 1-3). All differential byte-identical to serial:
+# BUMPED 2026-06-30 → revm eecaa7be (perpdex-parallel HEAD): the inline-taker single-pass driver on
+# top of the per-level redesign (Phases 1-3) + the TICK_WALK_CAP correctness fix. All differential
+# byte-identical to serial:
 #   Phase 1 (4748af8d): drop the sorted bid/ask price Vec → tick-walk book discovery
 #     (next_ask_at_or_above / next_bid_at_or_below). This BUMPED the commitment
 #     BLOCK_COMMITMENT_VERSION 3→4 (golden re-pinned 0xa4f990da; BusinessSnapshot unchanged).
@@ -752,22 +753,26 @@ vergen-git2 = "=1.0.5"
 #   CAP FIX (90ddb6af): the Phase-1 tick-walk capped its scan at 4096 ticks and reported far levels as
 #     EMPTY → on a sparse/wide book (realisticMix) takers stopped early, best zeroed, far levels
 #     orphaned → cross-level wrong fills + non-conservation (server perpdex-parallel-fail-f9e3c6b37).
-#     Now UNBOUNDED (ask→max_price, bid→tick floor). Serial repro taker_sweeps_across_wide_gap; serial
-#     132/0, perp-parallel 162/0 differential. commitment UNCHANGED (still v4 — golden 0xa4f990da, the
-#     scenario's gaps are < the old cap), so this bump needs NO fresh re-pin.
+#     Now UNBOUNDED (ask→max_price, bid→tick floor).
+#   INLINE-TAKER (74ef9915 MarketCompletion primitive + eecaa7be driver): replaces the segmented
+#     re-dispatch (O(n^2/k) on crossing-heavy realisticMix from taker contagion + tail re-dispatch +
+#     per-segment re-plan) with ONE pass — takers execute INLINE under the held BBO ticket after a
+#     market-wide completion-wait + on-demand FIFO sort; no deferral/contagion/re-dispatch → O(n).
+#     Matching stays blocking-serial. Adversarially validated (wf_4b41904b). Gate: serial 132/0
+#     (golden + BusinessSnapshot UNCHANGED), perp-parallel 162/0 differential byte-identical.
 # >>> commitment is v4 (unchanged since the 58d6c12a pin): deploying from a pre-v4 chain needs a WIPE;
-# >>> from the prior v4 pin this is a drop-in cap fix. <<<
-revm = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "revm-database-interface" }
-op-revm = { git = "https://github.com/0gfoundation/revm", rev = "90ddb6af6cacd228acaa00c212dde0926f5a40a6", package = "op-revm" }
+# >>> from the prior v4 pin this is a drop-in (cap fix + inline-taker are both byte-identical). <<<
+revm = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "revm-database-interface" }
+op-revm = { git = "https://github.com/0gfoundation/revm", rev = "eecaa7bea25bf60f60dfd31e5ec9dd0f7fc3f972", package = "op-revm" }
 
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "3cd26846c2ea72be7d7609839168c9275143187b", package = "alloy-evm" }
 
