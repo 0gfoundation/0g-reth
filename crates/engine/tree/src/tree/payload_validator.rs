@@ -745,6 +745,13 @@ where
         T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
         Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
     {
+        // DEBUG (env PERP_PARALLEL_DISABLE): force the serial fallback for EVERY block — the EVM pass
+        // runs the 0x1003 precompile normally (no replay), i.e. pure serial execution. Used to test
+        // whether a verifier failure (e.g. matchingPair TRADE_MISMATCH) is parallel-specific or also
+        // present in serial. Off by default.
+        if std::env::var_os("PERP_PARALLEL_DISABLE").is_some() {
+            return Ok((Vec::new(), None));
+        }
         let book = Arc::new(SharedPerpBook::new());
         let block_env = block_env.clone();
         let block_number = block_env.number; // captured before make_ctx moves block_env (audit logging)
