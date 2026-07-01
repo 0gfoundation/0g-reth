@@ -48,8 +48,8 @@ use revm::context::{BlockEnv, CfgEnv, Context, ContextTr, Journal, TxEnv};
 use revm::context_interface::journaled_state::PerpReplayResult;
 use revm::database::EmptyDB;
 use revm::precompile::perp_dex::parallel::{
-    classify_perp_tx, transact_block_parallel_logged, transact_block_serial, CancelOutcome,
-    OpResult, PerpOp, PerpTxClass, PlaceOutcome,
+    classify_perp_tx, transact_block_parallel_logged, transact_block_parallel_logged_profiled,
+    transact_block_serial, CancelOutcome, OpResult, PerpOp, PerpTxClass, PlaceOutcome,
 };
 use revm::precompile::perp_dex::PERP_DEX_ADDRESS;
 use revm::primitives::hardfork::SpecId;
@@ -766,6 +766,9 @@ where
         if std::env::var_os("PERP_PARALLEL_DISABLE").is_some() {
             return Ok((Vec::new(), None));
         }
+        // PERP_PROF (catalog #21 instrumentation): start the pre-phase wall clock when profiling is
+        // enabled. `None` (the default) makes every profiling touch below a no-op — zero cost off.
+        let prephase_start = std::env::var_os("PERP_PROF").is_some().then(Instant::now);
         let book = Arc::new(SharedPerpBook::new());
         let block_env = block_env.clone();
         let block_number = block_env.number; // captured before make_ctx moves block_env (audit logging)
@@ -849,8 +852,30 @@ where
         // contagion floor run serially in place). Results are in `ops` (= txn_id) order, each carrying
         // the EVM logs its matching emitted (the `_logged` variant — the matching runs in throwaway
         // contexts, so the driver drains each op's logs here for the replay to re-emit).
-        let results = transact_block_parallel_logged(self.perp_pool.as_ref(), &book, &ops, make_ctx)
+        // PERP_PROF: when set, run the PROFILED driver — identical execution to the plain path, plus a
+        // per-block PerpBlockProfile (achieved concurrency §1, classification histogram §A, block
+        // totals §H) — and emit one `PERP_PROF …` line to reth.log. Off by default. The profiled call
+        // adds one Instant + a few relaxed atomics per op; the plain branch below is unchanged.
+        let results = if let Some(pstart) = prephase_start {
+            let scan_ns = pstart.elapsed().as_nanos() as u64; // §D: serial classify-scan gate (pre-run)
+            let (results, prof) = transact_block_parallel_logged_profiled(
+                self.perp_pool.as_ref(),
+                &book,
+                &ops,
+                make_ctx,
+            )
             .map_err(BlockExecutionError::other)?;
+            let prephase_ns = pstart.elapsed().as_nanos() as u64; // §D: whole pre-phase wall (scan+run)
+            info!(
+                target: "engine::tree",
+                "{}",
+                prof.format_prof_line(block_number.saturating_to::<u64>(), prephase_ns, scan_ns)
+            );
+            results
+        } else {
+            transact_block_parallel_logged(self.perp_pool.as_ref(), &book, &ops, make_ctx)
+                .map_err(BlockExecutionError::other)?
+        };
 
         // AUDIT: compare the REAL run's captured per-op logs against a serial re-run (same cold-read).
         // These logs are what phase B re-emits, so a divergence here = the parallel node's events
