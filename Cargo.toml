@@ -762,17 +762,17 @@ vergen-git2 = "=1.0.5"
 #     (golden + BusinessSnapshot UNCHANGED), perp-parallel 162/0 differential byte-identical.
 # >>> commitment is v4 (unchanged since the 58d6c12a pin): deploying from a pre-v4 chain needs a WIPE;
 # >>> from the prior v4 pin this is a drop-in (cap fix + inline-taker are both byte-identical). <<<
-revm = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "revm-database-interface" }
-op-revm = { git = "https://github.com/0gfoundation/revm", rev = "ca7b815eb6a5fb337216c86073cbc144c18c23de", package = "op-revm" }
+revm = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "revm-database-interface" }
+op-revm = { git = "https://github.com/0gfoundation/revm", rev = "c1cf1787b9d2f5a5d82b3e4f3543b1ea30daf3df", package = "op-revm" }
 
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "3cd26846c2ea72be7d7609839168c9275143187b", package = "alloy-evm" }
 
