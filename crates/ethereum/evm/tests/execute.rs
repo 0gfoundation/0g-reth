@@ -86,7 +86,7 @@ fn eip_4788_non_genesis_call() {
         .execute_one(&RecoveredBlock::new_unhashed(
             Block {
                 header: header.clone(),
-                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None },
+                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None },
             },
             vec![],
         ))
@@ -105,7 +105,7 @@ fn eip_4788_non_genesis_call() {
         .execute_one(&RecoveredBlock::new_unhashed(
             Block {
                 header: header.clone(),
-                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None },
+                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None },
             },
             vec![],
         ))
@@ -165,7 +165,7 @@ fn eip_4788_no_code_cancun() {
         .execute_one(&RecoveredBlock::new_unhashed(
             Block {
                 header,
-                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None },
+                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None },
             },
             vec![],
         ))
@@ -207,7 +207,7 @@ fn eip_4788_empty_account_call() {
         .execute_one(&RecoveredBlock::new_unhashed(
             Block {
                 header,
-                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None },
+                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None },
             },
             vec![],
         ))

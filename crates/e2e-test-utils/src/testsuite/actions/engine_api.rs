@@ -346,5 +346,6 @@ fn block_to_payload_v3(block: Block) -> ExecutionPayloadV3 {
         },
         blob_gas_used: block.header.inner.blob_gas_used.unwrap_or(0),
         excess_blob_gas: block.header.inner.excess_blob_gas.unwrap_or(0),
+        slashed: vec![],
     }
 }
