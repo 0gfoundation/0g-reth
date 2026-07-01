@@ -48,8 +48,9 @@ use revm::context::{BlockEnv, CfgEnv, Context, ContextTr, Journal, TxEnv};
 use revm::context_interface::journaled_state::PerpReplayResult;
 use revm::database::EmptyDB;
 use revm::precompile::perp_dex::parallel::{
-    classify_perp_tx, transact_block_parallel_logged, transact_block_parallel_logged_profiled,
-    transact_block_serial, CancelOutcome, OpResult, PerpOp, PerpTxClass, PlaceOutcome,
+    classify_perp_tx_pending, finalize_pending_classes, transact_block_parallel_logged,
+    transact_block_parallel_logged_profiled, transact_block_serial, CancelOutcome, OpResult, PerpOp,
+    PendingPerpTx, PerpTxClass, PlaceOutcome,
 };
 use revm::precompile::perp_dex::PERP_DEX_ADDRESS;
 use revm::primitives::hardfork::SpecId;
@@ -793,22 +794,21 @@ where
             ctx
         };
 
-        // Classify each top-level 0x…1003 trading call SERIALLY. A `Trade` feeds the driver (its
-        // replay result is filled from the driver outcome below); a `Reject` is replayed as a revert
-        // now; non-trading / non-perp calls are skipped (they run normally in the serial EVM pass).
+        // A `Trade` feeds the driver (its replay result is filled from the driver outcome below); a
+        // `Reject` is replayed as a revert now; non-trading / non-perp calls are skipped (they run
+        // normally in the serial EVM pass).
         enum Slot {
             Trade { op_index: usize, success_output: Vec<u8> },
             Reject { output: Vec<u8> },
         }
-        let mut classify_ctx = make_ctx(book.clone());
-        let mut ops: Vec<PerpOp> = Vec::new();
-        let mut slots: Vec<Slot> = Vec::new();
-        // A NON-trading 0x1003 call (deposit / withdraw / addMargin / liquidate / updateIndexPrice /
-        // …) can change state a later trade depends on (e.g. margin). The parallel pre-phase runs ALL
-        // trades upfront against committed state, so it cannot honor an intra-block dependency on such
-        // a call. Rather than mis-order, we FALL BACK to full serial for any block containing one (the
-        // relayer's trade-only batches still parallelize; mixed blocks stay serial → byte-identical).
-        let mut saw_non_trading_perp = false;
+        // #3 (parallel decode): gather the block's 0x…1003 calldata (serial, no state reads), DECODE +
+        // verify them CONCURRENTLY on the resident perp pool (`classify_perp_tx_pending` is read-only —
+        // a direct place's order id is DEFERRED), then assign the direct-place ids SERIALLY in txn
+        // order (`finalize_pending_classes` — the nonce read-modify-write that cannot race across
+        // same-account places). This parallelizes the two per-tx cold reads (place base-nonce + cancel
+        // load_order) that dominated the serial scan; the result is byte-identical to a serial
+        // classify_perp_tx scan.
+        let mut perp_calls: Vec<(Vec<u8>, alloy_primitives::Address)> = Vec::new();
         for tx_res in self
             .tx_iterator_for(input)
             .map_err(|e| InsertBlockErrorKind::Other(Box::new(e)))?
@@ -818,11 +818,47 @@ where
             if signed.to() != Some(PERP_DEX_ADDRESS) {
                 continue;
             }
-            let calldata = signed.input().to_vec();
-            let signer = *item.signer();
-            match classify_perp_tx(&calldata, signer, &mut classify_ctx)
+            perp_calls.push((signed.input().to_vec(), *item.signer()));
+        }
+        // No 0x1003 calls at all → nothing to parallelize; run the plain serial path.
+        if perp_calls.is_empty() {
+            return Ok((Vec::new(), None));
+        }
+        // Parallel decode/verify (read-only) on the pool — one fresh cold-read ctx per call.
+        let pending: Vec<PendingPerpTx> = {
+            let tasks: Vec<_> = perp_calls
+                .into_iter()
+                .map(|(calldata, signer)| {
+                    let make_ctx = make_ctx.clone();
+                    let book = book.clone();
+                    move || -> Result<PendingPerpTx, _> {
+                        let mut ctx = make_ctx(book);
+                        classify_perp_tx_pending(&calldata, signer, &mut ctx)
+                    }
+                })
+                .collect();
+            self.perp_pool
+                .run_batch(tasks)
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
                 .map_err(BlockExecutionError::other)?
-            {
+        };
+        // Serial finalize: assign direct-place ids by per-maker nonce sequence in txn order + write
+        // each toucher's final nonce to the book (byte-identical to the serial classify scan).
+        let mut classify_ctx = make_ctx(book.clone());
+        let classes = finalize_pending_classes(pending, &mut classify_ctx)
+            .map_err(BlockExecutionError::other)?;
+
+        let mut ops: Vec<PerpOp> = Vec::new();
+        let mut slots: Vec<Slot> = Vec::new();
+        // A NON-trading 0x1003 call (deposit / withdraw / addMargin / liquidate / updateIndexPrice /
+        // …) can change state a later trade depends on (e.g. margin). The parallel pre-phase runs ALL
+        // trades upfront against committed state, so it cannot honor an intra-block dependency on such
+        // a call. Rather than mis-order, we FALL BACK to full serial for any block containing one (the
+        // relayer's trade-only batches still parallelize; mixed blocks stay serial → byte-identical).
+        let mut saw_non_trading_perp = false;
+        for class in classes {
+            match class {
                 PerpTxClass::Trade { op, success_output } => {
                     let op_index = ops.len();
                     ops.push(op);
