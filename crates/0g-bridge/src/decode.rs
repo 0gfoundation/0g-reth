@@ -98,7 +98,9 @@ pub enum BridgeDecodeError {
     Ssz(DecodeError),
 
     /// Decoded list exceeds [`MAX_BRIDGE_MESSAGES_PER_BLOCK`].
-    #[error("bridge request contains {got} messages, exceeds cap of {MAX_BRIDGE_MESSAGES_PER_BLOCK}")]
+    #[error(
+        "bridge request contains {got} messages, exceeds cap of {MAX_BRIDGE_MESSAGES_PER_BLOCK}"
+    )]
     TooManyMessages {
         /// Actual decoded length.
         got: usize,
@@ -216,8 +218,8 @@ mod tests {
     /// drift on either side fails one of the two.
     ///
     /// Fixture decomposition (matches `sample_msg(7)`):
-    /// - `[0x04 0x00 0x00 0x00]` — SSZ container offset prefix (u32 LE = 4, points past
-    ///   itself to start of the messages list content).
+    /// - `[0x04 0x00 0x00 0x00]` — SSZ container offset prefix (u32 LE = 4, points past itself to
+    ///   start of the messages list content).
     /// - `[0x3C 0x41 0x00 0x00 0x00 0x00 0x00 0x00]` — `src_chain_id = 16700` (LE u64).
     /// - `[0x3E 0x41 0x00 0x00 0x00 0x00 0x00 0x00]` — `dst_chain_id = 16702` (LE u64).
     /// - `[0x07 0x00 0x00 0x00 0x00 0x00 0x00 0x00]` — `nonce = 7` (LE u64).
@@ -244,9 +246,7 @@ mod tests {
         // recipient = [0x02; 20] raw.
         expected.extend_from_slice(&[0x02; 20]);
         // amount = 1e18 BE u256.
-        expected.extend_from_slice(
-            &U256::from(1_000_000_000_000_000_000u128).to_be_bytes::<32>(),
-        );
+        expected.extend_from_slice(&U256::from(1_000_000_000_000_000_000u128).to_be_bytes::<32>());
         // mode = 1 (MintBurn).
         expected.push(0x01);
         // src_block = 42 LE.
@@ -277,8 +277,7 @@ mod tests {
     ///
     /// See [`single_message_wire_format_byte_equal_to_cl_container`] above for the
     /// byte-decomposition comment.
-    const CANONICAL_BRIDGE_REQUESTS_FIXTURE_HEX: &str =
-        "04000000\
+    const CANONICAL_BRIDGE_REQUESTS_FIXTURE_HEX: &str = "04000000\
          3c41000000000000\
          3e41000000000000\
          0700000000000000\
@@ -313,7 +312,10 @@ mod tests {
         assert_eq!(m.nonce, 7);
         assert_eq!(m.local_token, FixedBytes([1u8; 20]));
         assert_eq!(m.recipient, FixedBytes([2u8; 20]));
-        assert_eq!(m.amount, FixedBytes(U256::from(1_000_000_000_000_000_000u128).to_be_bytes::<32>()));
+        assert_eq!(
+            m.amount,
+            FixedBytes(U256::from(1_000_000_000_000_000_000u128).to_be_bytes::<32>())
+        );
         assert_eq!(m.mode, 1);
         assert_eq!(m.src_block, 42);
 

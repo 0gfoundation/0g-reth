@@ -129,17 +129,26 @@ where
         // their EL derivation fails — but here the source of truth is the CL bytes, so the
         // check happens at payload validation.
         let timestamp = payload.payload.timestamp();
+        // 0G: post-Bridge, the validated 0xf0 blob (sans type byte) is also sealed into the
+        // converted block's body below, so the stored block carries the CL-determined bytes.
+        // That is what every block-replay path (`context_for_block`: pipeline backfill,
+        // engine-tree downloaded blocks, buffered-then-executed payloads, re-execution) reads
+        // to re-run the park system call and re-emit the 0xf0 entry byte-identically — the
+        // blob exists nowhere else on-chain (not in receipts, not in state).
+        let mut bridge_requests = None;
         if self.chain_spec().is_bridge_active_at_timestamp(timestamp) {
             let bridge_entry = payload
                 .sidecar
                 .requests()
-                .and_then(|reqs| reth_0g_bridge::find_bridge_entry(reqs.iter()))
-                .map(|entry| entry.as_ref());
+                .and_then(|reqs| reth_0g_bridge::find_bridge_entry(reqs.iter()));
 
             match bridge_entry {
                 Some(entry) => {
                     reth_0g_bridge::decode_bridge_messages(&entry[1..])
                         .map_err(|e| NewPayloadError::Other(BridgePayloadError::from(e).into()))?;
+                    // Zero-copy refcounted view of the entry data, type byte stripped —
+                    // byte-verbatim with what `context_for_payload` hands the executor.
+                    bridge_requests = Some(entry.slice(1..));
                 }
                 None => {
                     return Err(NewPayloadError::Other(
@@ -161,7 +170,17 @@ where
             return Err(NewPayloadError::Other(BridgePayloadError::UnexpectedBridgeEntry.into()));
         }
 
-        let sealed_block = self.inner.ensure_well_formed_payload(payload)?;
+        let mut sealed_block = self.inner.ensure_well_formed_payload(payload)?;
+
+        // Seal the blob into the body. Safe to do on the already-sealed block: the block hash
+        // covers only the header (the blob is committed through `header.requests_hash`, which
+        // the inner validation just checked against `payload.block_hash`).
+        if let Some(blob) = bridge_requests {
+            let (header, mut body) = sealed_block.split_sealed_header_body();
+            body.bridge_requests = Some(blob);
+            sealed_block = reth_primitives_traits::SealedBlock::from_sealed_parts(header, body);
+        }
+
         sealed_block.try_recover().map_err(|e| NewPayloadError::Other(e.into()))
     }
 }

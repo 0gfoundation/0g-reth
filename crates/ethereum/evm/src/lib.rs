@@ -60,6 +60,55 @@ pub mod execute {
     pub type EthExecutorProvider = EthEvmConfig;
 }
 
+/// 0G: decode a CL-emitted `BridgeRequests` SSZ blob into ABI calldata for
+/// `Bridge.parkRemoteMessages(InboundMessage[])`, stamping `fee_recipient` onto every message.
+///
+/// Shared by all three execution-context constructors so build (`context_for_next_block`),
+/// verify (`context_for_payload`) and replay (`context_for_block`) produce byte-identical
+/// calldata from the same blob: `fee_recipient` is the block coinbase on every path
+/// (`attrs.suggested_fee_recipient` is sealed into `header.beneficiary`, which is what
+/// `payload.fee_recipient()` and `header.beneficiary()` read back).
+///
+/// Decoding errors degrade to `None` (system call skipped) — a malformed blob would already
+/// have failed CL-side payload validation upstream, and treating it as a hard error here would
+/// prevent the EL from making progress at all.
+fn bridge_calldata_from_ssz(
+    chain_id: u64,
+    raw: &[u8],
+    fee_recipient: alloy_primitives::Address,
+    path: &'static str,
+) -> Option<Bytes> {
+    match reth_0g_bridge::decode_bridge_messages(raw) {
+        Ok(msgs) => {
+            let cd = reth_0g_bridge::encode_park_remote_messages_calldata(
+                &msgs,
+                chain_id,
+                fee_recipient,
+            );
+            tracing::debug!(
+                target: "0g::evm::bridge",
+                ssz_len = raw.len(),
+                msg_count = msgs.len(),
+                calldata_len = cd.len(),
+                ?fee_recipient,
+                path,
+                "decoded bridge SSZ to parkRemoteMessages calldata"
+            );
+            Some(cd)
+        }
+        Err(err) => {
+            tracing::warn!(
+                target: "0g::evm::bridge",
+                ?err,
+                ssz_len = raw.len(),
+                path,
+                "failed to decode bridge SSZ blob — system call will be skipped"
+            );
+            None
+        }
+    }
+}
+
 mod build;
 pub use build::EthBlockAssembler;
 
@@ -266,6 +315,29 @@ where
     }
 
     fn context_for_block<'a>(&self, block: &'a SealedBlock<Block>) -> EthBlockExecutionCtx<'a> {
+        // 0G: replay (pipeline `ExecutionStage`, engine-tree downloaded blocks,
+        // `reth stage run` / `re-execute`, ExEx backfill) sources the CL-determined bridge
+        // blob from the block body, where the build path (`EthBlockAssembler`) and the verify
+        // path (`ensure_well_formed_payload`) sealed it verbatim. This is what lets a node
+        // that never saw the CL's newPayload — e.g. a devp2p-backfilling follower — execute
+        // `parkRemoteMessages` and re-emit the 0xf0 requests entry byte-identically, so its
+        // post-state root matches the sealed header. Pre-Bridge blocks carry `None` and this
+        // reduces to the historical no-op behavior.
+        //
+        // `fee_recipient` is `header.beneficiary()`: byte-equal to the build path's
+        // `attrs.suggested_fee_recipient` (the proposer sealed that address into the header
+        // coinbase) and the verify path's `payload.fee_recipient()`.
+        let bridge_request = block.body().bridge_requests.as_ref().and_then(|raw| {
+            bridge_calldata_from_ssz(
+                self.chain_spec().chain().id(),
+                raw,
+                block.header().beneficiary(),
+                "context_for_block (replay)",
+            )
+            .map(Cow::Owned)
+        });
+        let bridge_request_raw = block.body().bridge_requests.as_ref().map(Cow::Borrowed);
+
         EthBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
@@ -273,20 +345,8 @@ where
             withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
             slashed: block.body().slashed.as_ref().map(Cow::Borrowed),
             timestamp: block.header().timestamp(),
-            // Block-replay path (already-built block): no bridge request blob is attached
-            // here. Bridge calldata is sourced from the engine API via `context_for_payload`;
-            // a re-executed historical block reads requests from the receipts root rather
-            // than re-running the system call.
-            bridge_request: None,
-            // Replay can't recover the raw SSZ blob (it's not in body, not in receipts, not
-            // in any system contract storage — the 0xf0 entry is CL-pushed only). On replay
-            // `EthBlockExecutor::finish` therefore skips the 0xf0 push, and the 0G
-            // `validate_block_post_execution` tolerates this: it overwrites `requests_hash`
-            // on the in-memory header rather than diffing against the sealed value. The db
-            // copy retains the original `requests_hash` (which covered 0xf0 when the block
-            // was first built/verified); the in-memory recomputation here is discarded after
-            // replay completes.
-            bridge_request_raw: None,
+            bridge_request,
+            bridge_request_raw,
         }
     }
 
@@ -313,34 +373,13 @@ where
         // build/verify byte-equal calldata.
         let fee_recipient = attributes.suggested_fee_recipient;
         let bridge_calldata = attributes.bridge_request.as_ref().and_then(|raw| {
-            match reth_0g_bridge::decode_bridge_messages(raw) {
-                Ok(msgs) => {
-                    let chain_id = self.chain_spec().chain().id();
-                    let cd = reth_0g_bridge::encode_park_remote_messages_calldata(
-                        &msgs,
-                        chain_id,
-                        fee_recipient,
-                    );
-                    tracing::debug!(
-                        target: "0g::evm::bridge",
-                        ssz_len = raw.len(),
-                        msg_count = msgs.len(),
-                        calldata_len = cd.len(),
-                        ?fee_recipient,
-                        "context_for_next_block: decoded bridge SSZ to ABI calldata (build path)"
-                    );
-                    Some(Cow::Owned(cd))
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        target: "0g::evm::bridge",
-                        ?err,
-                        ssz_len = raw.len(),
-                        "context_for_next_block: failed to decode bridge SSZ blob — system call will be skipped"
-                    );
-                    None
-                }
-            }
+            bridge_calldata_from_ssz(
+                self.chain_spec().chain().id(),
+                raw,
+                fee_recipient,
+                "context_for_next_block (build)",
+            )
+            .map(Cow::Owned)
         });
 
         // 0G: Forward the original SSZ blob unchanged so `EthBlockExecutor::finish` can append
@@ -456,33 +495,13 @@ where
         let fee_recipient = payload.payload.fee_recipient();
         let bridge_calldata: Option<Cow<'a, Bytes>> = bridge_entry
             .map(|entry| &entry[1..])
-            .and_then(|raw| match reth_0g_bridge::decode_bridge_messages(raw) {
-                Ok(msgs) => {
-                    let chain_id = self.chain_spec().chain().id();
-                    let cd = reth_0g_bridge::encode_park_remote_messages_calldata(
-                        &msgs,
-                        chain_id,
-                        fee_recipient,
-                    );
-                    tracing::debug!(
-                        target: "0g::evm::bridge",
-                        ssz_len = raw.len(),
-                        msg_count = msgs.len(),
-                        calldata_len = cd.len(),
-                        ?fee_recipient,
-                        "context_for_payload: decoded bridge SSZ to ABI calldata (verify path)"
-                    );
-                    Some(cd)
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        target: "0g::evm::bridge",
-                        ?err,
-                        ssz_len = raw.len(),
-                        "context_for_payload: failed to decode bridge SSZ blob — system call will be skipped"
-                    );
-                    None
-                }
+            .and_then(|raw| {
+                bridge_calldata_from_ssz(
+                    self.chain_spec().chain().id(),
+                    raw,
+                    fee_recipient,
+                    "context_for_payload (verify)",
+                )
             })
             .map(Cow::Owned);
 

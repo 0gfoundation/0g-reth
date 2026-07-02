@@ -551,7 +551,13 @@ pub struct EthereumConsensusBuilder {
 impl<Node> ConsensusBuilder<Node> for EthereumConsensusBuilder
 where
     Node: FullNodeTypes<
-        Types: NodeTypes<ChainSpec: EthChainSpec + EthereumHardforks, Primitives = EthPrimitives>,
+        Types: NodeTypes<
+            // `EthExecutorSpec` carries the 0G `is_bridge_active_at_timestamp` method used by
+            // `EthBeaconConsensus` to enforce the fork-gated bridge-requests body presence
+            // rule on downloaded bodies and pre-execution block validation.
+            ChainSpec: EthChainSpec + EthereumHardforks + EthExecutorSpec,
+            Primitives = EthPrimitives,
+        >,
     >,
 {
     type Consensus = Arc<EthBeaconConsensus<<Node::Types as NodeTypes>::ChainSpec>>;

@@ -115,6 +115,12 @@ pub trait BlockBody:
         None
     }
 
+    /// Returns the 0G bridge-requests SSZ blob carried in the body, if any (post-Bridge-fork
+    /// blocks only).
+    fn bridge_requests(&self) -> Option<&Bytes> {
+        None
+    }
+
     /// Calculate the withdrawals root for the block body.
     ///
     /// Returns `Some(root)` if withdrawals are present, otherwise `None`.
@@ -231,6 +237,10 @@ where
 
     fn slashed(&self) -> Option<&Withdrawals> {
         self.slashed.as_ref()
+    }
+
+    fn bridge_requests(&self) -> Option<&Bytes> {
+        self.bridge_requests.as_ref()
     }
 
     fn ommers(&self) -> Option<&[Self::OmmerHeader]> {

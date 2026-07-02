@@ -515,6 +515,7 @@ where
             ommers: block.body.ommers,
             withdrawals: block.body.withdrawals,
             slashed: block.body.slashed,
+            bridge_requests: block.body.bridge_requests,
         };
 
         let block = alloy_consensus::Block::new(header, body);
@@ -993,6 +994,7 @@ mod tests {
             ommers: vec![],
             withdrawals: None,
             slashed: None,
+            bridge_requests: None,
         };
         let block_with_recovered = alloy_consensus::Block::new(header, body);
 

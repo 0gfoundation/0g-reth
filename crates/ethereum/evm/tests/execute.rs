@@ -91,6 +91,7 @@ fn eip_4788_non_genesis_call() {
                     ommers: vec![],
                     withdrawals: None,
                     slashed: None,
+                    bridge_requests: None,
                 },
             },
             vec![],
@@ -115,6 +116,7 @@ fn eip_4788_non_genesis_call() {
                     ommers: vec![],
                     withdrawals: None,
                     slashed: None,
+                    bridge_requests: None,
                 },
             },
             vec![],
@@ -180,6 +182,7 @@ fn eip_4788_no_code_cancun() {
                     ommers: vec![],
                     withdrawals: None,
                     slashed: None,
+                    bridge_requests: None,
                 },
             },
             vec![],
@@ -227,6 +230,7 @@ fn eip_4788_empty_account_call() {
                     ommers: vec![],
                     withdrawals: None,
                     slashed: None,
+                    bridge_requests: None,
                 },
             },
             vec![],
@@ -817,6 +821,7 @@ fn test_balance_increment_not_duplicated() {
                 ommers: vec![],
                 withdrawals: Some(vec![withdrawal].into()),
                 slashed: None,
+                bridge_requests: None,
             },
         },
         vec![],
@@ -1386,16 +1391,12 @@ mod bridge_tests {
         assert_eq!(decoded.msgs[0].feeRecipient, PROPOSER_X);
     }
 
-    /// Replay path (`context_for_block`) must zero out both bridge ctx fields. The historical
-    /// block's 0xf0 raw SSZ has no on-chain source (not in body, not in receipts, not in any
-    /// system contract storage), so the replay-path `finish()` skips both the bridge system call
-    /// and the 0xf0 push. The lenient 0G `validate_block_post_execution` then overwrites
-    /// `requests_hash` on the in-memory header rather than diffing against the sealed value, so
-    /// replay tolerates the missing entry. Locking this wiring invariant here prevents a future
-    /// refactor from accidentally repopulating either field from receipts / system storage and
-    /// breaking the byte-equivalence with the original execution.
+    /// Replay path (`context_for_block`) on a body WITHOUT a bridge blob (every pre-Bridge
+    /// block, and any body written before the body-carrier fix) must leave both bridge ctx
+    /// fields `None` — byte-identical behavior to the historical replay path: no park system
+    /// call, no 0xf0 push.
     #[test]
-    fn context_for_block_clears_bridge_fields() {
+    fn context_for_block_without_body_blob_has_no_bridge_ctx() {
         use reth_ethereum_primitives::{Block, BlockBody};
         use reth_evm::ConfigureEvm;
         use reth_primitives_traits::SealedBlock;
@@ -1421,12 +1422,134 @@ mod bridge_tests {
         let ctx = provider.context_for_block(&sealed);
         assert!(
             ctx.bridge_request.is_none(),
-            "replay path must NOT populate bridge_request (no calldata to recover)",
+            "replay of a blob-less body must NOT populate bridge_request",
         );
         assert!(
             ctx.bridge_request_raw.is_none(),
-            "replay path must NOT populate bridge_request_raw (no SSZ source to recover)",
+            "replay of a blob-less body must NOT populate bridge_request_raw",
         );
+    }
+
+    /// Replay path (`context_for_block`) on a body that carries the bridge blob must produce
+    /// bridge ctx byte-identical to the build and verify paths: `bridge_request_raw` is the
+    /// body blob verbatim (so `finish()` re-pushes the 0xf0 entry byte-identically and the
+    /// recomputed requests list matches the sealed `requests_hash`), and `bridge_request` is
+    /// the park calldata computed with `fee_recipient = header.beneficiary` (byte-equal to the
+    /// build path's `attrs.suggested_fee_recipient` and the verify path's
+    /// `payload.fee_recipient()`, both of which are the same coinbase address). This is the
+    /// invariant that makes devp2p backfill / pipeline replay reproduce the sealed state root.
+    #[test]
+    fn context_for_block_replay_parity_with_build_and_verify() {
+        use alloy_primitives::FixedBytes;
+        use alloy_sol_types::SolCall;
+        use reth_0g_bridge::{encode::parkRemoteMessagesCall, BridgeMessage, BridgeRequests};
+        use reth_ethereum_primitives::{Block, BlockBody};
+        use reth_evm::ConfigureEvm;
+        use reth_primitives_traits::SealedBlock;
+        use ssz::Encode;
+
+        let spec = build_chain_spec(true);
+        let local_chain_id = spec.chain.id();
+        let provider = EthEvmConfig::new(spec);
+
+        const PROPOSER_X: Address = address!("0x00112233445566778899AABBCCDDEEFF00112233");
+
+        let msg = BridgeMessage {
+            src_chain_id: 16700,
+            dst_chain_id: local_chain_id,
+            nonce: 9,
+            local_token: FixedBytes([0x33; 20]),
+            recipient: FixedBytes([0x44; 20]),
+            amount: FixedBytes(U256::from(77u64).to_be_bytes::<32>()),
+            mode: 1,
+            src_block: 12,
+        };
+        let ssz_bytes = BridgeRequests { messages: vec![msg.clone()] }.as_ssz_bytes();
+
+        let header = Header {
+            beneficiary: PROPOSER_X,
+            timestamp: 100,
+            number: 1,
+            excess_blob_gas: Some(0),
+            blob_gas_used: Some(0),
+            parent_beacon_block_root: Some(B256::ZERO),
+            withdrawals_root: Some(B256::ZERO),
+            ..Header::default()
+        };
+        let block = Block {
+            header,
+            body: BlockBody {
+                withdrawals: Some(Default::default()),
+                bridge_requests: Some(ssz_bytes.clone().into()),
+                ..Default::default()
+            },
+        };
+        let sealed = SealedBlock::seal_slow(block);
+
+        let ctx = provider.context_for_block(&sealed);
+
+        // Raw blob threads through verbatim so finish() re-pushes 0xf0 byte-identically.
+        assert_eq!(
+            ctx.bridge_request_raw.as_deref().map(|b| b.as_ref()),
+            Some(ssz_bytes.as_slice()),
+            "replay must thread the body blob verbatim into bridge_request_raw"
+        );
+
+        // Calldata byte-equal to what build/verify produce for the same blob + coinbase.
+        let cd_replay = ctx
+            .bridge_request
+            .as_deref()
+            .expect("replay path produces calldata when the body carries a blob");
+        let cd_build = reth_0g_bridge::encode_park_remote_messages_calldata(
+            &[msg],
+            local_chain_id,
+            PROPOSER_X,
+        );
+        assert_eq!(
+            cd_replay.as_ref(),
+            cd_build.as_ref(),
+            "replay-path calldata (fee_recipient = header.beneficiary) must be byte-equal to \
+             the build/verify calldata; any drift diverges the replayed state root"
+        );
+
+        let decoded = parkRemoteMessagesCall::abi_decode(cd_replay.as_ref()).expect("decode");
+        assert_eq!(decoded.msgs.len(), 1);
+        assert_eq!(decoded.msgs[0].feeRecipient, PROPOSER_X);
+
+        // Empty-list blob (the 4-byte SSZ offset the CL emits for zero messages) must also
+        // thread through: raw verbatim, calldata for an empty message array.
+        let empty_ssz = BridgeRequests { messages: vec![] }.as_ssz_bytes();
+        assert_eq!(empty_ssz.as_slice(), &[0x04, 0x00, 0x00, 0x00]);
+        let block = Block {
+            header: Header {
+                beneficiary: PROPOSER_X,
+                timestamp: 100,
+                number: 1,
+                excess_blob_gas: Some(0),
+                blob_gas_used: Some(0),
+                parent_beacon_block_root: Some(B256::ZERO),
+                withdrawals_root: Some(B256::ZERO),
+                ..Header::default()
+            },
+            body: BlockBody {
+                withdrawals: Some(Default::default()),
+                bridge_requests: Some(empty_ssz.clone().into()),
+                ..Default::default()
+            },
+        };
+        let sealed = SealedBlock::seal_slow(block);
+        let ctx = provider.context_for_block(&sealed);
+        assert_eq!(
+            ctx.bridge_request_raw.as_deref().map(|b| b.as_ref()),
+            Some(empty_ssz.as_slice()),
+            "empty-list blob must thread verbatim (its 0xf0 entry is still covered by \
+             requests_hash)"
+        );
+        let decoded = parkRemoteMessagesCall::abi_decode(
+            ctx.bridge_request.as_deref().expect("calldata for empty list").as_ref(),
+        )
+        .expect("decode empty");
+        assert!(decoded.msgs.is_empty());
     }
 
     /// Defense-in-depth: with Bridge fork inactive at the block timestamp, the 0xf0 push gate

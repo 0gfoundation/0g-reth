@@ -551,6 +551,7 @@ mod tests {
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
             slashed: None,
+            bridge_requests: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
