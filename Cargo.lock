@@ -3448,10 +3448,12 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
+ "alloy-primitives",
  "alloy-sol-macro",
  "alloy-sol-types",
  "eyre",
  "reth-ethereum",
+ "reth-storage-errors",
 ]
 
 [[package]]
