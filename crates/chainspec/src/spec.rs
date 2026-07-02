@@ -34,10 +34,10 @@ use reth_network_peers::{
 use reth_primitives_traits::{sync::LazyLock, SealedHeader};
 
 /// Deterministic Bridge proxy address shared across every 0G chain (mainnet, testnet, every
-/// satellite). Deployed via single-key throwaway raw txs at fixed nonces — see
-/// `0g-restaking-contracts/script/deploy/BridgeRawTxs.s.sol` for the generator and
-/// `deployments/bridge-raw-prod-0.json` for the pinned artifact. The CL side hardcodes the
-/// same value at `chain.BridgeContractAddressHex`. Surfaced through `bridge_contract_address`
+/// satellite). It is the CREATE address of a BeaconProxy deployed by an ephemeral throwaway-key
+/// deployer signing legacy (pre-EIP-155) raw txs at fixed nonces, so the same bytes broadcast on
+/// any chain land the proxy here regardless of bytecode (CREATE addresses are nonce-derived). The
+/// CL hardcodes the same value at `chain.BridgeContractAddressHex`. Surfaced through `bridge_contract_address`
 /// only on 0G chains (gated by `bridge_activation_time > 0`); Ethereum L1 specs keep the
 /// activation time at 0 and report `None`, preserving upstream behaviour.
 pub const BRIDGE_PROXY_ADDRESS: Address = address!("0x54EbF70B91fe29fdF6F5C6cF726983DDF0DE0750");

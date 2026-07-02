@@ -1434,8 +1434,8 @@ mod bridge_tests {
     /// `requests_hash` would cover a different entry than the CL expects, and the block hash
     /// would mismatch on the consensus side. Lock the two constants together at test time.
     ///
-    /// Note: this does NOT catch CL Go-side drift. The Go-side `BridgeRequestType` constant
-    /// in `0g-chain-ng/primitives/constants` is frozen by cross-stream convention; ensuring it
+    /// Note: this does NOT catch CL Go-side drift. The Go-side bridge request-type constant
+    /// is frozen by cross-stream convention; ensuring it
     /// matches `BRIDGE_REQUEST_TYPE` is a release-engineering / review-time guarantee, not a
     /// compile-time one (the Go and Rust toolchains can't share constants directly).
     #[test]

@@ -212,8 +212,8 @@ mod tests {
     /// failed at the cross-language wire boundary. Hardcoding the expected bytes here
     /// locks the field order, byte width, and endianness; any single-byte change to the
     /// `BridgeMessage` SSZ derive immediately breaks this test. The CL (Go) side mirrors this
-    /// fixture against the same byte literal in `TestBridgeRequests_CrossLanguageFixture`
-    /// (`0g-chain-ng/consensus-types/types/bridge_requests_test.go`).
+    /// fixture against the same byte literal in its own cross-language fixture test, so a schema
+    /// drift on either side fails one of the two.
     ///
     /// Fixture decomposition (matches `sample_msg(7)`):
     /// - `[0x04 0x00 0x00 0x00]` — SSZ container offset prefix (u32 LE = 4, points past
@@ -263,7 +263,7 @@ mod tests {
     }
 
     /// Canonical hex for a one-message `BridgeRequests` fixture, shared verbatim with the CL
-    /// (Go) side in `0g-chain-ng/consensus-types/types/bridge_requests_test.go`. This is the
+    /// (Go) side's cross-language fixture test. This is the
     /// authoritative wire-format reference: any drift to the SSZ schema (field reorder,
     /// endianness flip, derive-attribute change) on EITHER side will fail one of the two
     /// language-side tests against this literal, surfacing a cross-language schema mismatch
