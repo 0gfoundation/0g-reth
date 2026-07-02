@@ -161,12 +161,25 @@ impl ConfigureEvm for CustomEvmConfig {
 }
 
 impl ConfigureEngineEvm<ExecutionData> for CustomEvmConfig {
+    type PayloadTx = <EthEvmConfig as ConfigureEngineEvm<ExecutionData>>::PayloadTx;
+
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> EvmEnvFor<Self> {
         self.inner.evm_env_for_payload(payload)
     }
 
     fn context_for_payload<'a>(&self, payload: &'a ExecutionData) -> ExecutionCtxFor<'a, Self> {
         self.inner.context_for_payload(payload)
+    }
+
+    fn payload_txs_encoded(&self, payload: &ExecutionData) -> Vec<alloy_primitives::Bytes> {
+        self.inner.payload_txs_encoded(payload)
+    }
+
+    fn decode_payload_tx(
+        &self,
+        encoded: alloy_primitives::Bytes,
+    ) -> Result<Self::PayloadTx, reth_storage_errors::any::AnyError> {
+        self.inner.decode_payload_tx(encoded)
     }
 
     fn tx_iterator_for_payload(&self, payload: &ExecutionData) -> impl ExecutableTxIterator<Self> {

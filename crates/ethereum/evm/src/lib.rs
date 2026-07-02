@@ -17,8 +17,8 @@
 
 extern crate alloc;
 
-use alloc::{borrow::Cow, sync::Arc};
-use alloy_consensus::{BlockHeader, Header};
+use alloc::{borrow::Cow, sync::Arc, vec::Vec};
+use alloy_consensus::{transaction::Recovered, BlockHeader, Header};
 use alloy_eips::Decodable2718;
 pub use alloy_evm::EthEvm;
 use alloy_evm::{
@@ -362,13 +362,22 @@ where
         }
     }
 
+    type PayloadTx = Recovered<TxTy<Self::Primitives>>;
+
+    fn payload_txs_encoded(&self, payload: &ExecutionData) -> Vec<Bytes> {
+        payload.payload.transactions().clone()
+    }
+
+    fn decode_payload_tx(&self, encoded: Bytes) -> Result<Self::PayloadTx, AnyError> {
+        let tx = TxTy::<Self::Primitives>::decode_2718_exact(encoded.as_ref())
+            .map_err(AnyError::new)?;
+        let signer = tx.try_recover().map_err(AnyError::new)?;
+        Ok(tx.with_signer(signer))
+    }
+
     fn tx_iterator_for_payload(&self, payload: &ExecutionData) -> impl ExecutableTxIterator<Self> {
-        payload.payload.transactions().clone().into_iter().map(|tx| {
-            let tx =
-                TxTy::<Self::Primitives>::decode_2718_exact(tx.as_ref()).map_err(AnyError::new)?;
-            let signer = tx.try_recover().map_err(AnyError::new)?;
-            Ok::<_, AnyError>(tx.with_signer(signer))
-        })
+        let this = self.clone();
+        self.payload_txs_encoded(payload).into_iter().map(move |tx| this.decode_payload_tx(tx))
     }
 }
 

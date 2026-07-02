@@ -182,6 +182,8 @@ where
     /// Persistent FIFO worker pool for the parallel PerpDEX place/cancel pre-phase (catalog #21 step
     /// 4b), reused across every block. `Arc` so the validator stays cheap to clone.
     perp_pool: Arc<PerpPool>,
+    /// Worker count of `perp_pool` (sizes the parallel payload-recovery chunks).
+    perp_pool_threads: usize,
 }
 
 impl<N, P, Evm, V> BasicEngineValidator<P, Evm, V>
@@ -243,6 +245,7 @@ where
             metrics: EngineApiMetrics::default(),
             validator,
             perp_pool,
+            perp_pool_threads,
         }
     }
 
@@ -275,22 +278,93 @@ where
         }
     }
 
-    /// Returns [`ExecutableTxIterator`] for the given payload or block.
-    pub fn tx_iterator_for<'a, T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
-        &'a self,
-        input: &'a BlockOrPayload<T>,
-    ) -> Result<impl ExecutableTxIterator<Evm> + 'a, NewPayloadError>
+    /// Recover-once-and-share (perf lever 1): materialize + sender-recover the input's transactions
+    /// ONCE and extract the perp-destined `(calldata, signer)` pairs in the same pass. For a PAYLOAD,
+    /// decode + ecrecover (~90µs/tx, previously paid TWICE per block — once by the perp prephase's
+    /// serial gather and once by the payload processor's lazy tx stream) run in PARALLEL chunks on
+    /// the resident perp pool. For a BLOCK the senders are already recovered — cheap serial
+    /// materialization. The returned iterator feeds the payload processor exactly like
+    /// [`Self::tx_iterator_for`]; a decode/recovery error surfaces here (the same tx would have
+    /// failed the lazy iterator downstream).
+    pub fn recovered_txs_for<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
+        &self,
+        input: &BlockOrPayload<T>,
+    ) -> Result<
+        (impl ExecutableTxIterator<Evm>, Vec<(Vec<u8>, alloy_primitives::Address)>),
+        NewPayloadError,
+    >
     where
         V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
+        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N> + 'static,
     {
         match input {
-            BlockOrPayload::Payload(payload) => Ok(Either::Left(
-                self.evm_config.tx_iterator_for_payload(payload).map(|res| res.map(Either::Left)),
-            )),
+            BlockOrPayload::Payload(payload) => {
+                let encoded = self.evm_config.payload_txs_encoded(payload);
+                let n = encoded.len();
+                // Chunked fan-out — per-tx pool tasks would pay more dispatch than work (the #3
+                // lesson); ~2 chunks per worker balances tail skew vs dispatch. Small blocks decode
+                // inline (the pool round-trip isn't worth it).
+                let recovered: Vec<<Evm as ConfigureEngineEvm<T::ExecutionData>>::PayloadTx> =
+                    if n <= 32 {
+                        encoded
+                            .into_iter()
+                            .map(|tx| self.evm_config.decode_payload_tx(tx))
+                            .collect::<Result<_, _>>()
+                            .map_err(|e| NewPayloadError::Other(Box::new(e)))?
+                    } else {
+                        let chunk = n.div_ceil(self.perp_pool_threads.max(1) * 2).max(8);
+                        let tasks: Vec<_> = encoded
+                            .chunks(chunk)
+                            .map(|c| {
+                                let cfg = self.evm_config.clone();
+                                // `Bytes` clones are cheap (Arc-backed); the task must own its
+                                // chunk (`run_batch` requires 'static).
+                                let c = c.to_vec();
+                                move || {
+                                    c.into_iter()
+                                        .map(|tx| cfg.decode_payload_tx(tx))
+                                        .collect::<Result<Vec<_>, _>>()
+                                }
+                            })
+                            .collect();
+                        let mut recovered = Vec::with_capacity(n);
+                        for chunk in self.perp_pool.run_batch(tasks) {
+                            recovered
+                                .extend(chunk.map_err(|e| NewPayloadError::Other(Box::new(e)))?);
+                        }
+                        recovered
+                    };
+                let perp_calls = recovered
+                    .iter()
+                    .filter(|tx| tx.tx().to() == Some(PERP_DEX_ADDRESS))
+                    .map(|tx| (tx.tx().input().to_vec(), *tx.signer()))
+                    .collect();
+                Ok((
+                    Either::Left(
+                        recovered
+                            .into_iter()
+                            .map(|tx| Ok::<_, core::convert::Infallible>(Either::Left(tx))),
+                    ),
+                    perp_calls,
+                ))
+            }
             BlockOrPayload::Block(block) => {
                 let transactions = block.clone_transactions_recovered().collect::<Vec<_>>();
-                Ok(Either::Right(transactions.into_iter().map(|tx| Ok(Either::Right(tx)))))
+                let perp_calls = transactions
+                    .iter()
+                    // `Recovered`'s INHERENT accessors (vs the RecoveredTx trait methods the
+                    // generic payload arm resolves to): `inner()` for the tx, by-value `signer()`.
+                    .filter(|tx| tx.inner().to() == Some(PERP_DEX_ADDRESS))
+                    .map(|tx| (tx.inner().input().to_vec(), tx.signer()))
+                    .collect();
+                Ok((
+                    Either::Right(
+                        transactions
+                            .into_iter()
+                            .map(|tx| Ok::<_, core::convert::Infallible>(Either::Right(tx))),
+                    ),
+                    perp_calls,
+                ))
             }
         }
     }
@@ -451,8 +525,24 @@ where
             "Deciding which state root algorithm to run"
         );
 
-        // use prewarming background task
-        let txs = self.tx_iterator_for(&input)?;
+        // Recover-once-and-share (perf lever 1): decode + sender-recover every tx ONCE — payload txs
+        // in parallel chunks on the perp pool — and extract the perp calls in the same pass. The
+        // materialized list feeds the payload processor below (prewarm + the execution's
+        // iter_transactions channel) AND the perp prephase, which previously EACH re-ran the
+        // ~90µs/tx ecrecover serially.
+        let recover_start = std::env::var_os("PERP_PROF").is_some().then(Instant::now);
+        let (txs, perp_calls) = self.recovered_txs_for(&input)?;
+        if let Some(t) = recover_start {
+            // Companion to the PERP_PROF prephase line: the recovery moved OUT of prephase_ms/scan_ms
+            // (lever 1), so emit it separately to keep block-time accounting comparable across builds.
+            info!(
+                target: "engine::tree",
+                "PERP_PROF_RECOVER block={} recover_ms={:.3} perp_calls={}",
+                block_num_hash.number,
+                t.elapsed().as_secs_f64() * 1e3,
+                perp_calls.len()
+            );
+        }
         let mut handle = if use_state_root_task {
             // use background tasks for state root calc
             let consistent_view =
@@ -526,12 +616,18 @@ where
         let perp_handle = ctx.canonical_in_memory_state().canonical_perp_handle();
         let output = match if self.config.state_provider_metrics() {
             let state_provider = InstrumentedStateProvider::from_state_provider(&state_provider);
-            let result =
-                self.execute_block(&state_provider, env, &input, &mut handle, perp_handle.clone());
+            let result = self.execute_block(
+                &state_provider,
+                env,
+                &input,
+                &mut handle,
+                perp_handle.clone(),
+                perp_calls,
+            );
             state_provider.record_total_latency();
             result
         } else {
-            self.execute_block(&state_provider, env, &input, &mut handle, perp_handle)
+            self.execute_block(&state_provider, env, &input, &mut handle, perp_handle, perp_calls)
         } {
             Ok(output) => output,
             Err(err) => return self.handle_execution_error(input, err, &parent_block),
@@ -745,25 +841,26 @@ where
     }
 
     /// Step-4b parallel PerpDEX pre-phase: classify the block's top-level `0x…1003` trading calls
-    /// SERIALLY (decode + verify, NO matching), run them through the parallel driver against a fresh
-    /// shared book, and build the replay vec the serial EVM pass replays. Returns the per-trading-tx
-    /// replay results (block order) + the shared book holding the net off-trie delta. A block with no
-    /// perp trading txs returns `(empty, None)` → the caller runs the plain serial path.
-    fn perp_parallel_prephase<T>(
+    /// (decode CONCURRENTLY on the pool + serial id-finalize, NO matching), run them through the
+    /// parallel driver against a fresh shared book, and build the replay vec the serial EVM pass
+    /// replays. Returns the per-trading-tx replay results (block order) + the shared book holding
+    /// the net off-trie delta. A block with no perp trading txs returns `(empty, None)` → the
+    /// caller runs the plain serial path.
+    fn perp_parallel_prephase(
         &self,
-        input: &BlockOrPayload<T>,
+        // The block's 0x…1003 (calldata, signer) pairs in txn order, pre-extracted by
+        // `recovered_txs_for` from the ONCE-recovered tx list (lever 1) — this fn no longer
+        // iterates/recovers the block itself, so PERP_PROF's scan_ms is classify+finalize only.
+        perp_calls: Vec<(Vec<u8>, alloy_primitives::Address)>,
         block_env: &BlockEnv,
         perp: &PerpHandle,
-    ) -> Result<(Vec<PerpReplayResult>, Option<Arc<SharedPerpBook>>), InsertBlockErrorKind>
-    where
-        V: PayloadValidator<T, Block = N::Block>,
-        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
-    {
+    ) -> Result<(Vec<PerpReplayResult>, Option<Arc<SharedPerpBook>>), InsertBlockErrorKind> {
         // DEBUG (env PERP_PARALLEL_DISABLE): force the serial fallback for EVERY block — the EVM pass
         // runs the 0x1003 precompile normally (no replay), i.e. pure serial execution. Used to test
         // whether a verifier failure (e.g. matchingPair TRADE_MISMATCH) is parallel-specific or also
-        // present in serial. Off by default.
+        // present in serial. Off by default. NOTE (lever 1): the ONCE-per-block parallel tx recovery
+        // in `recovered_txs_for` runs regardless of this flag (it also feeds the payload processor),
+        // so DISABLE isolates the perp classify+driver only, not the recovery.
         if std::env::var_os("PERP_PARALLEL_DISABLE").is_some() {
             return Ok((Vec::new(), None));
         }
@@ -801,25 +898,12 @@ where
             Trade { op_index: usize, success_output: Vec<u8> },
             Reject { output: Vec<u8> },
         }
-        // #3 (parallel decode): gather the block's 0x…1003 calldata (serial, no state reads), DECODE +
-        // verify them CONCURRENTLY on the resident perp pool (`classify_perp_tx_pending` is read-only —
-        // a direct place's order id is DEFERRED), then assign the direct-place ids SERIALLY in txn
-        // order (`finalize_pending_classes` — the nonce read-modify-write that cannot race across
-        // same-account places). This parallelizes the two per-tx cold reads (place base-nonce + cancel
-        // load_order) that dominated the serial scan; the result is byte-identical to a serial
-        // classify_perp_tx scan.
-        let mut perp_calls: Vec<(Vec<u8>, alloy_primitives::Address)> = Vec::new();
-        for tx_res in self
-            .tx_iterator_for(input)
-            .map_err(|e| InsertBlockErrorKind::Other(Box::new(e)))?
-        {
-            let item = tx_res.map_err(BlockExecutionError::other)?;
-            let signed = item.tx();
-            if signed.to() != Some(PERP_DEX_ADDRESS) {
-                continue;
-            }
-            perp_calls.push((signed.input().to_vec(), *item.signer()));
-        }
+        // #3 (parallel decode): DECODE + verify the pre-gathered 0x…1003 calls CONCURRENTLY on the
+        // resident perp pool (`classify_perp_tx_pending` is read-only — a direct place's order id is
+        // DEFERRED), then assign the direct-place ids SERIALLY in txn order
+        // (`finalize_pending_classes` — the nonce read-modify-write that cannot race across
+        // same-account places). Byte-identical to a serial classify_perp_tx scan.
+        //
         // No 0x1003 calls at all → nothing to parallelize; run the plain serial path.
         if perp_calls.is_empty() {
             return Ok((Vec::new(), None));
@@ -992,6 +1076,10 @@ where
         // Off-trie PerpDEX ("PerpState") committed-store read handle; wraps the execution DB in
         // `PerpDb` so the EVM's perp cold-read resolves to `canonical_perp` (off the state trie).
         perp: PerpHandle,
+        // The block's perp-destined (calldata, signer) pairs, pre-extracted by
+        // `recovered_txs_for` from the ONCE-recovered tx list (lever 1) — the prephase no longer
+        // re-decodes/re-recovers the block itself.
+        perp_calls: Vec<(Vec<u8>, alloy_primitives::Address)>,
     ) -> Result<BlockExecutionOutput<N::Receipt>, InsertBlockErrorKind>
     where
         S: StateProvider,
@@ -1011,7 +1099,7 @@ where
         // is borrowed here (it is moved into `PerpDb` below). `(empty, None)` for a block with no perp
         // trades → the serial path runs unchanged.
         let (perp_replay, perp_book) =
-            self.perp_parallel_prephase(input, &env.evm_env.block_env, &perp)?;
+            self.perp_parallel_prephase(perp_calls, &env.evm_env.block_env, &perp)?;
 
         let mut db = State::builder()
             .with_database(PerpDb::new(StateProviderDatabase::new(&state_provider), Some(perp)))
