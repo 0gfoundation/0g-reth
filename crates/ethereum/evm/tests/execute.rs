@@ -1129,8 +1129,11 @@ mod bridge_tests {
 
     #[test]
     fn finish_omits_0xf0_entry_when_raw_none() {
-        // Prague active but bridge_request_raw=None → no 0xf0 entry emitted. This is the replay
-        // path (`context_for_block` always sets None) and any pre-Bridge-fork scenario.
+        // Prague active but bridge_request_raw=None → no 0xf0 entry emitted. This is the case
+        // for any body that carries no bridge blob (pre-Bridge-fork blocks). Note the replay
+        // path (`context_for_block`) is NOT None when the body carries a bridge blob: it
+        // recovers the raw bytes from `BlockBody.bridge_requests` and re-pushes the 0xf0 entry
+        // (see `context_for_block_replay_parity_with_build_and_verify`).
         let spec = build_chain_spec(true);
         let requests = finish_requests_with_raw(spec, None, None);
         let entries: Vec<&[u8]> = requests.iter().map(|b| b.as_ref()).collect();
