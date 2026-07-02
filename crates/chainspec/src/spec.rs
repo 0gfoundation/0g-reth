@@ -19,7 +19,7 @@ use alloy_eips::{
     eip7892::BlobScheduleBlobParams,
 };
 use alloy_genesis::Genesis;
-use alloy_primitives::{address, b256, Address, BlockNumber, B256, U256};
+use alloy_primitives::{address, b256, Address, BlockNumber, B256, U256, U64};
 use alloy_trie::root::state_root_ref_unhashed;
 use core::fmt::Debug;
 use derive_more::From;
@@ -756,15 +756,31 @@ impl From<Genesis> for ChainSpec {
         });
 
         // 0G bridge fork — read activation time from genesis JSON `config.bridgeForkTime`
-        // (u64 unix timestamp). The proxy address itself is a compile-time constant
-        // (`BRIDGE_PROXY_ADDRESS`) returned by the trait impl whenever activation time is
-        // non-zero; we no longer plumb it through genesis. `0` keeps the bridge disabled.
-        let bridge_activation_time = genesis
+        // (unix timestamp). It rides in `extra_fields` rather than a typed `genesis.config`
+        // field because the upstream alloy ChainConfig has no field for 0G-custom forks
+        // (the bridge is the only 0G fork that reaches the EL; rssymbiotic/slashing/etc. are
+        // CL-only). The proxy address itself is a compile-time constant (`BRIDGE_PROXY_ADDRESS`)
+        // returned by the trait impl whenever activation time is non-zero; we no longer plumb
+        // it through genesis.
+        //
+        // Parse it exactly like alloy parses the standard `*Time` fields (deserialize_u64_opt →
+        // quantity): accept a decimal number OR a 0x-hex string (U64 handles both). Absent field
+        // ⇒ 0 = bridge disabled (mainnet/testnet sentinel). But a *present-but-malformed* value
+        // must fail loudly, NOT be swallowed into silent-disable — otherwise a stringified/typo'd
+        // timestamp boots the node with the bridge off and then drops it out of consensus at the
+        // CL's fork boundary (V4 FCU / post-fork blocks rejected) with no startup diagnostic.
+        let bridge_activation_time = match genesis
             .config
             .extra_fields
-            .get_deserialized::<u64>("bridgeForkTime")
-            .and_then(|r| r.ok())
-            .unwrap_or(0);
+            .get_deserialized::<U64>("bridgeForkTime")
+        {
+            None => 0,
+            Some(Ok(t)) => t.to::<u64>(),
+            Some(Err(err)) => panic!(
+                "invalid genesis: `bridgeForkTime` must be a unix timestamp \
+                 (decimal number or 0x-prefixed hex quantity): {err}"
+            ),
+        };
 
         // Bridge ⟹ Prague: block assembly assumes every bridge-active block carries the
         // EIP-7685 `requests_hash` header field (the bridge `0xf0` entry is pushed into the
@@ -2466,6 +2482,27 @@ Post-merge hard forks (timestamp based):
         let genesis: Genesis = serde_json::from_str(s).unwrap();
         let spec = ChainSpec::from(genesis);
         assert_eq!(spec.bridge_activation_time, 0);
+    }
+
+    /// `bridgeForkTime` accepts a 0x-hex quantity string, same as alloy parses the standard
+    /// `*Time` fields (deserialize_u64_opt → quantity). 0x64 == 100.
+    #[test]
+    fn bridge_fork_time_accepts_hex_quantity() {
+        let s = r#"{"config":{"chainId":1337,"shanghaiTime":0,"cancunTime":0,"pragueTime":100,"bridgeForkTime":"0x64"},"nonce":"0x0","timestamp":"0x0","extraData":"0x","gasLimit":"0x4c4b40","difficulty":"0x1","alloc":{}}"#;
+        let genesis: Genesis = serde_json::from_str(s).unwrap();
+        let spec = ChainSpec::from(genesis);
+        assert_eq!(spec.bridge_activation_time, 100);
+    }
+
+    /// A present-but-malformed `bridgeForkTime` must fail spec construction, not be swallowed
+    /// into silent-disable — otherwise the node boots with the bridge off and drops out of
+    /// consensus at the CL's fork boundary with no diagnostic.
+    #[test]
+    #[should_panic(expected = "`bridgeForkTime` must be a unix timestamp")]
+    fn bridge_fork_time_malformed_is_rejected() {
+        let s = r#"{"config":{"chainId":1337,"shanghaiTime":0,"cancunTime":0,"pragueTime":100,"bridgeForkTime":"not-a-timestamp"},"nonce":"0x0","timestamp":"0x0","extraData":"0x","gasLimit":"0x4c4b40","difficulty":"0x1","alloc":{}}"#;
+        let genesis: Genesis = serde_json::from_str(s).unwrap();
+        let _ = ChainSpec::from(genesis);
     }
 
     #[test]
