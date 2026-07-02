@@ -191,6 +191,16 @@ where
     ) -> Result<(), EngineObjectValidationError> {
         // 0G Bridge fork: gate `bridgeRequests` and method-version against the chain spec.
         //
+        // SCOPE: this gate runs only on FCUs that carry payload attributes (build
+        // requests) — a `forkchoiceUpdated{V3,V4}` with `payloadAttributes = null`
+        // (a plain head/finality update) never reaches here, so it is NOT
+        // method-version-gated against the fork. That is deliberate and benign: a
+        // no-attrs FCU builds no payload, decodes no `bridgeRequests`, and runs no
+        // bridge system call, so its method version has no consensus/state effect,
+        // and leaving head-update FCUs version-lenient matches upstream reth's
+        // handling of every fork. The build path below — the only path that touches
+        // bridge state — is fully gated.
+        //
         //   * V3 + Bridge active at this timestamp → reject (CL must use V4 post-fork)
         //   * V4 + Bridge inactive                → reject (V4 only valid post-fork)
         //   * V4 + Bridge active                  → require non-nil `bridgeRequests` that decodes
