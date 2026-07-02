@@ -441,13 +441,12 @@ where
         // misbehaving CL would already have failed payload validation upstream.
         // Locate the `0xf0` entry once and reuse for both fields below.
         let sidecar_requests_count = payload.sidecar.requests().map_or(0, |r| r.iter().count());
-        let bridge_entry: Option<&[u8]> = payload
+        // Keep the full `&Bytes` entry (incl. type byte) so the raw field below is a zero-copy
+        // refcounted slice rather than a fresh allocation; strip the type byte per use.
+        let bridge_entry: Option<&Bytes> = payload
             .sidecar
             .requests()
-            .and_then(|reqs| {
-                reqs.iter().find(|r| r.first() == Some(&reth_0g_bridge::BRIDGE_REQUEST_TYPE))
-            })
-            .map(|entry| &entry[1..]);
+            .and_then(|reqs| reth_0g_bridge::find_bridge_entry(reqs.iter()));
 
         // 0G bridge fee path: source the dest-block coinbase from the payload's fee_recipient
         // (== block-header `beneficiary` post-merge). This is byte-equal to the build path's
@@ -456,6 +455,7 @@ where
         // matches the proposer's calldata byte-for-byte.
         let fee_recipient = payload.payload.fee_recipient();
         let bridge_calldata: Option<Cow<'a, Bytes>> = bridge_entry
+            .map(|entry| &entry[1..])
             .and_then(|raw| match reth_0g_bridge::decode_bridge_messages(raw) {
                 Ok(msgs) => {
                     let chain_id = self.chain_spec().chain().id();
@@ -490,8 +490,10 @@ where
         // path `EthBlockExecutor::finish` re-pushes them so its returned `requests` matches
         // the proposer-built sealed header's `requests_hash`. Bytes go through verbatim to
         // preserve byte-equality between proposer and verifier `executionRequests` lists.
+        // Zero-copy: `Bytes::slice` is a refcounted view into the sidecar entry, not a memcpy of
+        // the (up to ~13 KB at the message cap) SSZ body on every newPayload.
         let bridge_request_raw: Option<Cow<'a, Bytes>> =
-            bridge_entry.map(|raw| Cow::Owned(Bytes::copy_from_slice(raw)));
+            bridge_entry.map(|entry| Cow::Owned(entry.slice(1..)));
 
         tracing::debug!(
             target: "0g::evm::bridge",

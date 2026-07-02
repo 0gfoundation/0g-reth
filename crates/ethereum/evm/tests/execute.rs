@@ -86,7 +86,12 @@ fn eip_4788_non_genesis_call() {
         .execute_one(&RecoveredBlock::new_unhashed(
             Block {
                 header: header.clone(),
-                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None },
+                body: BlockBody {
+                    transactions: vec![],
+                    ommers: vec![],
+                    withdrawals: None,
+                    slashed: None,
+                },
             },
             vec![],
         ))
@@ -105,7 +110,12 @@ fn eip_4788_non_genesis_call() {
         .execute_one(&RecoveredBlock::new_unhashed(
             Block {
                 header: header.clone(),
-                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None },
+                body: BlockBody {
+                    transactions: vec![],
+                    ommers: vec![],
+                    withdrawals: None,
+                    slashed: None,
+                },
             },
             vec![],
         ))
@@ -165,7 +175,12 @@ fn eip_4788_no_code_cancun() {
         .execute_one(&RecoveredBlock::new_unhashed(
             Block {
                 header,
-                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None },
+                body: BlockBody {
+                    transactions: vec![],
+                    ommers: vec![],
+                    withdrawals: None,
+                    slashed: None,
+                },
             },
             vec![],
         ))
@@ -207,7 +222,12 @@ fn eip_4788_empty_account_call() {
         .execute_one(&RecoveredBlock::new_unhashed(
             Block {
                 header,
-                body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None, slashed: None },
+                body: BlockBody {
+                    transactions: vec![],
+                    ommers: vec![],
+                    withdrawals: None,
+                    slashed: None,
+                },
             },
             vec![],
         ))
@@ -796,6 +816,7 @@ fn test_balance_increment_not_duplicated() {
                 transactions: vec![],
                 ommers: vec![],
                 withdrawals: Some(vec![withdrawal].into()),
+                slashed: None,
             },
         },
         vec![],
@@ -944,6 +965,7 @@ mod bridge_tests {
             parent_beacon_block_root: header.parent_beacon_block_root,
             ommers: &[],
             withdrawals: Some(Cow::Owned(Withdrawals::new(vec![]))),
+            slashed: None,
             timestamp: header.timestamp,
             bridge_request: bridge_calldata.map(Cow::Owned),
             // This test exercises only the bridge system call's storage side-effects, not the
@@ -1069,6 +1091,7 @@ mod bridge_tests {
             parent_beacon_block_root: header.parent_beacon_block_root,
             ommers: &[],
             withdrawals: Some(Cow::Owned(Withdrawals::new(vec![]))),
+            slashed: None,
             timestamp: header.timestamp,
             bridge_request: bridge_calldata.map(Cow::Owned),
             bridge_request_raw: bridge_request_raw.map(Cow::Owned),

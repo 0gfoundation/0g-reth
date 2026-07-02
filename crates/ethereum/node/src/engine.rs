@@ -6,9 +6,9 @@ pub use alloy_rpc_types_engine::{
     ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4,
     ExecutionPayloadV1,
 };
-pub use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_engine_primitives::{EngineApiValidator, PayloadValidator};
+pub use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_ethereum_payload_builder::EthereumExecutionPayloadValidator;
 use reth_ethereum_primitives::Block;
 use reth_node_api::PayloadTypes;
@@ -119,9 +119,9 @@ where
         //      `bridge_request_raw = None`, `EthBlockExecutor::finish` skips the push, sealed
         //      `requests_hash` matches the (entry-less) wire bytes by accident.
         //   2. CL emits a `0xf0` entry whose SSZ body is malformed → `context_for_payload`'s
-        //      `decode_bridge_messages` returns `Err`, `bridge_request = None` (no system call)
-        //      but `bridge_request_raw = Some(raw)` so the malformed bytes still get pushed
-        //      into requests verbatim; `requests_hash` matches the wire bytes again.
+        //      `decode_bridge_messages` returns `Err`, `bridge_request = None` (no system call) but
+        //      `bridge_request_raw = Some(raw)` so the malformed bytes still get pushed into
+        //      requests verbatim; `requests_hash` matches the wire bytes again.
         //
         // Both routes accept the block but stop processing bridge messages. The fix surfaces
         // each as a specific [`BridgePayloadError`] before execution, aligning the failure
@@ -133,16 +133,13 @@ where
             let bridge_entry = payload
                 .sidecar
                 .requests()
-                .and_then(|reqs| {
-                    reqs.iter().find(|r| r.first() == Some(&reth_0g_bridge::BRIDGE_REQUEST_TYPE))
-                })
+                .and_then(|reqs| reth_0g_bridge::find_bridge_entry(reqs.iter()))
                 .map(|entry| entry.as_ref());
 
             match bridge_entry {
                 Some(entry) => {
-                    reth_0g_bridge::decode_bridge_messages(&entry[1..]).map_err(|e| {
-                        NewPayloadError::Other(BridgePayloadError::from(e).into())
-                    })?;
+                    reth_0g_bridge::decode_bridge_messages(&entry[1..])
+                        .map_err(|e| NewPayloadError::Other(BridgePayloadError::from(e).into()))?;
                 }
                 None => {
                     return Err(NewPayloadError::Other(
@@ -150,9 +147,12 @@ where
                     ));
                 }
             }
-        } else if payload.sidecar.requests().is_some_and(|reqs| {
-            reqs.iter().any(|r| r.first() == Some(&reth_0g_bridge::BRIDGE_REQUEST_TYPE))
-        }) {
+        } else if payload
+            .sidecar
+            .requests()
+            .and_then(|reqs| reth_0g_bridge::find_bridge_entry(reqs.iter()))
+            .is_some()
+        {
             // Mirror image of the post-fork checks: pre-Bridge the CL never emits a `0xf0`
             // entry, so one showing up here must be rejected rather than sealed into
             // `requests_hash` as an opaque blob. Pre-Prague payloads (V3 and earlier) have no
@@ -209,9 +209,9 @@ where
         let bridge_active =
             self.chain_spec().is_bridge_active_at_timestamp(attributes.inner.timestamp);
         match version {
-            EngineApiMessageVersion::V1
-            | EngineApiMessageVersion::V2
-            | EngineApiMessageVersion::V3 => {
+            EngineApiMessageVersion::V1 |
+            EngineApiMessageVersion::V2 |
+            EngineApiMessageVersion::V3 => {
                 if attributes.bridge_requests.is_some() {
                     return Err(EngineObjectValidationError::invalid_params(
                         BridgeAttributesError::FieldOnlyValidOnV4,
@@ -282,11 +282,7 @@ mod tests {
             (EthereumHardfork::Cancun.boxed(), ForkCondition::Timestamp(0)),
             (EthereumHardfork::Prague.boxed(), ForkCondition::Timestamp(0)),
         ]);
-        Arc::new(ChainSpec {
-            hardforks,
-            bridge_activation_time,
-            ..ChainSpec::default()
-        })
+        Arc::new(ChainSpec { hardforks, bridge_activation_time, ..ChainSpec::default() })
     }
 
     fn well_formed_attrs(timestamp: u64, bridge: Option<Bytes>) -> EthPayloadAttributes {
@@ -492,7 +488,7 @@ mod tests {
     #[test]
     fn bridge_active_payload_missing_0xf0_entry_returns_missing_entry_error() {
         let spec = spec_with_bridge(1); // bridge active at t=1
-        // executionRequests carries the standard EIP-7685 entries but no 0xf0.
+                                        // executionRequests carries the standard EIP-7685 entries but no 0xf0.
         let payload = make_payload(
             100,
             vec![
@@ -587,12 +583,9 @@ mod tests {
     #[test]
     fn bridge_inactive_payload_with_0xf0_entry_is_rejected() {
         let spec = spec_with_bridge(0); // bridge inactive forever
-        // Forged 0xf0 entry with a perfectly valid empty-list SSZ body — validity of the body
-        // is irrelevant pre-fork, presence alone must reject.
-        let payload = make_payload(
-            100,
-            vec![Bytes::from_static(&[0xf0, 0x04, 0x00, 0x00, 0x00])],
-        );
+                                        // Forged 0xf0 entry with a perfectly valid empty-list SSZ body — validity of the body
+                                        // is irrelevant pre-fork, presence alone must reject.
+        let payload = make_payload(100, vec![Bytes::from_static(&[0xf0, 0x04, 0x00, 0x00, 0x00])]);
         let err = validate_payload(spec, payload).unwrap_err();
         let msg = format!("{err}");
         assert!(

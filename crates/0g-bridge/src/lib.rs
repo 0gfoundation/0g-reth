@@ -37,6 +37,20 @@ pub use encode::{encode_park_remote_messages_calldata, InboundMessage};
 /// EL strips it before SSZ-decoding the body.
 pub const BRIDGE_REQUEST_TYPE: u8 = 0xf0;
 
+/// Locate the single 0G bridge (`0xf0`) entry in an EIP-7685 `executionRequests` list.
+///
+/// Single source of truth for "which entry is the bridge entry" — used by both the engine-API
+/// payload validator and the block executor so the selection rule can't drift between them.
+/// Returns the first entry whose leading type byte is [`BRIDGE_REQUEST_TYPE`] (the standard
+/// requests-list validator upstream already guarantees at-most-one and ascending order, so the
+/// first match is the only match). The returned slice still includes the type byte; strip it
+/// (`&entry[1..]`) before SSZ-decoding the body.
+pub fn find_bridge_entry<'a>(
+    reqs: impl IntoIterator<Item = &'a alloy_primitives::Bytes>,
+) -> Option<&'a alloy_primitives::Bytes> {
+    reqs.into_iter().find(|r| r.first() == Some(&BRIDGE_REQUEST_TYPE))
+}
+
 /// Hard cap on the number of [`BridgeMessage`] items the EL will accept per block.
 ///
 /// Pinned in the cross-stream schema; matches the CL builder budget. Decoders enforce this
