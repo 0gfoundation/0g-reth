@@ -2292,7 +2292,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3309,7 +3309,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4631,7 +4631,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.57.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -5083,7 +5083,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6350,7 +6350,7 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "10.1.0"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "auto_impl",
  "revm",
@@ -11036,7 +11036,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "29.0.1"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -11054,7 +11054,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "6.2.2"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "bitvec",
  "phf",
@@ -11065,7 +11065,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "9.1.0"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -11082,7 +11082,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "10.2.0"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -11097,7 +11097,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "7.0.5"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -11110,7 +11110,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "7.0.5"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "auto_impl",
  "either",
@@ -11122,7 +11122,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "10.0.1"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -11140,7 +11140,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "10.0.1"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "auto_impl",
  "either",
@@ -11177,7 +11177,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "25.0.3"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -11188,7 +11188,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "27.0.0"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -11223,7 +11223,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "20.2.1"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -11234,7 +11234,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "7.0.5"
-source = "git+https://github.com/0gfoundation/revm?rev=0a6fbb11dcff03dd1addfbe4feb359b05d711e5a#0a6fbb11dcff03dd1addfbe4feb359b05d711e5a"
+source = "git+https://github.com/0gfoundation/revm?rev=51890c02257315e17077627ca3b39a387b52b599#51890c02257315e17077627ca3b39a387b52b599"
 dependencies = [
  "bitflags 2.11.1",
  "revm-bytecode",
@@ -11476,7 +11476,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11489,7 +11489,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11547,7 +11547,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -12400,7 +12400,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -13628,7 +13628,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
