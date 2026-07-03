@@ -35,7 +35,7 @@ use reth_primitives_traits::{
     AlloyBlockHeader, BlockTy, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader
 };
 use reth_provider::{
-    BlockExecutionOutput, BlockHashReader, BlockNumReader, BlockReader, DBProvider,
+    AccountReader, BlockExecutionOutput, BlockHashReader, BlockNumReader, BlockReader, DBProvider,
     DatabaseProviderFactory, ExecutionOutcome, HashedPostStateProvider, HeaderProvider,
     ProviderError, StateProvider, StateProviderFactory, StateReader, StateRootProvider,
 };
@@ -1093,6 +1093,58 @@ where
         let span = debug_span!(target: "engine::tree", "execute_block", num = ?num_hash.number, hash = ?num_hash.hash);
         let _enter = span.enter();
         debug!(target: "engine::tree", "Executing block");
+
+        // L2-2 Phase 0 probe (env PERP_SENDER_PREFETCH): best-effort PARALLEL warm-up of the block's
+        // perp senders' account state — K scoped threads, each with its OWN state provider (own read
+        // view, built on this thread and moved in, so no `P: Sync` bound is needed), values
+        // DISCARDED. Zero consensus surface: a stale or missing read just means no warmth. Purpose is
+        // twofold: (a) if the EVM pass's per-tx cost is account-read-bound, the serial pass now runs
+        // warm; (b) it measures whether PARALLEL state reads amortize or amplify the kernel
+        // page/TLB term on this box — the go/no-go datum for full per-sender parallel replay
+        // (L2-2 Phase A). Timed to reth.log under PERP_PROF as `PERP_PROF_PREFETCH`.
+        if std::env::var_os("PERP_SENDER_PREFETCH").is_some() && !perp_calls.is_empty() {
+            let t0 = Instant::now();
+            let mut senders: Vec<alloy_primitives::Address> =
+                perp_calls.iter().map(|(_, s)| *s).collect();
+            senders.sort_unstable();
+            senders.dedup();
+            let k = self.perp_pool_threads.clamp(1, 16).min(senders.len().max(1));
+            let mut providers = Vec::with_capacity(k);
+            for _ in 0..k {
+                match self.provider.latest() {
+                    Ok(sp) => providers.push(sp),
+                    Err(_) => break, // best-effort: fewer workers (or none → skip entirely)
+                }
+            }
+            let hits = std::sync::atomic::AtomicUsize::new(0);
+            if !providers.is_empty() {
+                let chunk = senders.len().div_ceil(providers.len());
+                std::thread::scope(|s| {
+                    for (sp, ch) in providers.into_iter().zip(senders.chunks(chunk)) {
+                        let hits = &hits;
+                        s.spawn(move || {
+                            let mut n = 0usize;
+                            for a in ch {
+                                if sp.basic_account(a).ok().flatten().is_some() {
+                                    n += 1;
+                                }
+                            }
+                            hits.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+                        });
+                    }
+                });
+            }
+            if std::env::var_os("PERP_PROF").is_some() {
+                info!(
+                    target: "engine::tree",
+                    "PERP_PROF_PREFETCH block={} senders={} hits={} elapsed_ms={:.3}",
+                    num_hash.number,
+                    senders.len(),
+                    hits.load(std::sync::atomic::Ordering::Relaxed),
+                    t0.elapsed().as_secs_f64() * 1e3
+                );
+            }
+        }
 
         // Step 4b: parallel PerpDEX pre-phase — classify + match this block's trading calls against a
         // shared book BEFORE the serial EVM pass, which then REPLAYS the pre-computed results. `perp`
