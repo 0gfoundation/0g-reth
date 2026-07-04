@@ -754,7 +754,12 @@ where
         // after executing the block we can stop executing transactions
         handle.stop_prewarming_execution();
 
+        // PERP_PROF (newPayload non-exec residual decomposition, fm-rescan 2026-07-04: the
+        // ~45µs/tx beyond exec is the biggest unattributed marginal): stage timers, one line.
+        let np_prof = std::env::var_os("PERP_PROF").is_some().then(Instant::now);
+
         let mut block = self.convert_to_block_with_senders(input, senders)?;
+        let np_convert_ms = np_prof.map(|t| t.elapsed().as_secs_f64() * 1e3);
 
         // A helper macro that returns the block in case there was an error
         macro_rules! ensure_ok {
@@ -785,7 +790,14 @@ where
             return Err(InsertBlockError::new(block.into_sealed_block(), err.into()).into())
         }
 
+        let np_validate_ms = np_prof
+            .map(|_| post_execution_start.elapsed().as_secs_f64() * 1e3);
+
         let hashed_state = self.provider.hashed_post_state(&output.state);
+        let np_hashed_ms = np_prof
+            .map(|_| post_execution_start.elapsed().as_secs_f64() * 1e3)
+            .zip(np_validate_ms)
+            .map(|(a, b)| a - b);
 
         if let Err(err) =
             self.validator.validate_block_post_execution_with_hashed_state(&hashed_state, &block)
@@ -915,6 +927,26 @@ where
         } else {
             ExecutedTrieUpdates::Present(Arc::new(trie_output))
         };
+
+        if let (Some(t0), Some(convert), Some(validate), Some(hashed)) =
+            (np_prof, np_convert_ms, np_validate_ms, np_hashed_ms)
+        {
+            // total = this whole post-execution stretch (convert → here); tail = total minus the
+            // attributed stages (terminate_caching + connects-check + seal/assembly).
+            let total = t0.elapsed().as_secs_f64() * 1e3;
+            let root = root_elapsed.as_secs_f64() * 1e3;
+            info!(
+                target: "engine::tree",
+                "PERP_PROF_NP block={} convert_ms={:.3} validate_ms={:.3} hashed_ms={:.3} root_wait_ms={:.3} tail_ms={:.3} total_ms={:.3}",
+                block_num_hash.number,
+                convert,
+                validate,
+                hashed,
+                root,
+                (total - convert - validate - hashed - root).max(0.0),
+                total,
+            );
+        }
 
         Ok(ExecutedBlockWithTrieUpdates {
             block: ExecutedBlock {
