@@ -42,6 +42,11 @@ pub(crate) struct ReplayReadSet {
 }
 
 impl ReplayReadSet {
+    /// Number of materialized accounts.
+    pub(crate) fn len(&self) -> usize {
+        self.accounts.len()
+    }
+
     /// Builds the read-set: all tx senders + the 0x1003 precompile account (and its code) + the
     /// block beneficiary. Returns `None` on any provider error (shadow is best-effort).
     pub(crate) fn build<S: StateProvider>(
@@ -71,6 +76,64 @@ impl ReplayReadSet {
             rs.accounts.insert(addr, info);
         }
         Some(rs)
+    }
+}
+
+/// A2 stage-1 ("warm read-set"): a pass-through warm layer for the REAL serial execution pass.
+/// Account/code reads hit the pre-materialized read-set (pure memory); anything else — unknown
+/// accounts, storage, block hashes — falls through to the inner provider-backed DB exactly as
+/// before. Byte-identical semantics (the read-set was read from the SAME provider), so this is
+/// not consensus-relevant; an empty read-set degrades to plain pass-through (the disabled shape).
+///
+/// This captures most of the serial pass's per-tx cost (cold mdbx account reads with caching
+/// disabled) without touching the executor/receipt/journal machinery — the true-parallel
+/// switchover (stage-2, deterministic merge) remains a separate step gated on stage-1 numbers.
+#[derive(Debug)]
+pub(crate) struct WarmDb<D> {
+    rs: ReplayReadSet,
+    inner: D,
+    /// Read-set account hits / fall-through reads (plain fields — `Database` takes `&mut self`).
+    pub hits: u64,
+    pub misses: u64,
+}
+
+impl<D> WarmDb<D> {
+    pub(crate) fn new(rs: ReplayReadSet, inner: D) -> Self {
+        Self { rs, inner, hits: 0, misses: 0 }
+    }
+}
+
+impl<D: revm::Database> revm::Database for WarmDb<D> {
+    type Error = D::Error;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        if let Some(info) = self.rs.accounts.get(&address) {
+            self.hits += 1;
+            return Ok(info.clone());
+        }
+        self.misses += 1;
+        self.inner.basic(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        if let Some(c) = self.rs.code.get(&code_hash) {
+            self.hits += 1;
+            return Ok(c.clone());
+        }
+        self.misses += 1;
+        self.inner.code_by_hash(code_hash)
+    }
+
+    fn storage(
+        &mut self,
+        address: Address,
+        index: alloy_primitives::U256,
+    ) -> Result<alloy_primitives::U256, Self::Error> {
+        self.inner.storage(address, index)
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+        self.inner.block_hash(number)
     }
 }
 

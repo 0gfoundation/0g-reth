@@ -5,7 +5,7 @@ use crate::tree::{
     error::{InsertBlockError, InsertBlockErrorKind, InsertPayloadError},
     executor::WorkloadExecutor,
     instrumented_state::InstrumentedStateProvider,
-    parallel_replay::{shadow_parallel_replay, ReplayReadSet},
+    parallel_replay::{shadow_parallel_replay, ReplayReadSet, WarmDb},
     payload_processor::PayloadProcessor,
     persistence_state::CurrentPersistenceAction,
     precompile_cache::{CachedPrecompile, CachedPrecompileMetrics, PrecompileCacheMap},
@@ -307,7 +307,12 @@ where
         &self,
         input: &BlockOrPayload<T>,
     ) -> Result<
-        (impl ExecutableTxIterator<Evm>, Vec<(Vec<u8>, alloy_primitives::Address)>, usize),
+        (
+            impl ExecutableTxIterator<Evm>,
+            Vec<(Vec<u8>, alloy_primitives::Address)>,
+            usize,
+            Vec<alloy_primitives::Address>,
+        ),
         NewPayloadError,
     >
     where
@@ -389,6 +394,15 @@ where
                     .filter(|tx| tx.tx().to() == Some(PERP_DEX_ADDRESS))
                     .map(|tx| (tx.tx().input().to_vec(), *tx.signer()))
                     .collect();
+                // A2 stage-1 warm set: every address the block's txs name up front (senders +
+                // call targets) — the execution pass's account reads become memory hits.
+                let mut warm_addrs = Vec::with_capacity(recovered.len() * 2);
+                for tx in &recovered {
+                    warm_addrs.push(*tx.signer());
+                    if let Some(to) = tx.tx().to() {
+                        warm_addrs.push(to);
+                    }
+                }
                 Ok((
                     Either::Left(
                         recovered
@@ -397,6 +411,7 @@ where
                     ),
                     perp_calls,
                     pool_hits,
+                    warm_addrs,
                 ))
             }
             BlockOrPayload::Block(block) => {
@@ -408,6 +423,13 @@ where
                     .filter(|tx| tx.inner().to() == Some(PERP_DEX_ADDRESS))
                     .map(|tx| (tx.inner().input().to_vec(), tx.signer()))
                     .collect();
+                let mut warm_addrs = Vec::with_capacity(transactions.len() * 2);
+                for tx in &transactions {
+                    warm_addrs.push(tx.signer());
+                    if let Some(to) = tx.inner().to() {
+                        warm_addrs.push(to);
+                    }
+                }
                 Ok((
                     Either::Right(
                         transactions
@@ -417,6 +439,7 @@ where
                     perp_calls,
                     // Senders came recovered with the block — the lookup never runs here.
                     0,
+                    warm_addrs,
                 ))
             }
         }
@@ -584,7 +607,7 @@ where
         // iter_transactions channel) AND the perp prephase, which previously EACH re-ran the
         // ~90µs/tx ecrecover serially.
         let recover_start = std::env::var_os("PERP_PROF").is_some().then(Instant::now);
-        let (txs, perp_calls, pool_hits) = self.recovered_txs_for(&input)?;
+        let (txs, perp_calls, pool_hits, warm_addrs) = self.recovered_txs_for(&input)?;
         if let Some(t) = recover_start {
             // Companion to the PERP_PROF prephase line: the recovery moved OUT of prephase_ms/scan_ms
             // (lever 1), so emit it separately to keep block-time accounting comparable across builds.
@@ -678,11 +701,20 @@ where
                 &mut handle,
                 perp_handle.clone(),
                 perp_calls,
+                warm_addrs,
             );
             state_provider.record_total_latency();
             result
         } else {
-            self.execute_block(&state_provider, env, &input, &mut handle, perp_handle, perp_calls)
+            self.execute_block(
+                &state_provider,
+                env,
+                &input,
+                &mut handle,
+                perp_handle,
+                perp_calls,
+                warm_addrs,
+            )
         } {
             Ok(output) => output,
             Err(err) => return self.handle_execution_error(input, err, &parent_block),
@@ -1138,6 +1170,9 @@ where
         // `recovered_txs_for` from the ONCE-recovered tx list (lever 1) — the prephase no longer
         // re-decodes/re-recovers the block itself.
         perp_calls: Vec<(Vec<u8>, alloy_primitives::Address)>,
+        // A2 stage-1: every address the block's txs name (senders + call targets), materialized
+        // ONCE up front so the execution pass's account reads become memory hits (`WarmDb`).
+        warm_addrs: Vec<alloy_primitives::Address>,
     ) -> Result<BlockExecutionOutput<N::Receipt>, InsertBlockErrorKind>
     where
         S: StateProvider,
@@ -1221,8 +1256,33 @@ where
             && n_perp_calls >= 64)
             .then(|| perp_replay.clone());
 
+        // A2 stage-1 (warm read-set, `PERP_EXEC_WARM_OFF` disables): materialize the block's
+        // named accounts once through the authoritative provider, then serve the execution
+        // pass's account reads from memory (misses fall through — byte-identical values, so no
+        // consensus surface; an empty set = plain pass-through). Captures the cold-mdbx +
+        // page-fault share of the serial pass; the read-set hit/miss telemetry below doubles as
+        // the coverage rail for the stage-2 true-parallel switchover.
+        let warm_start = Instant::now();
+        let warm_rs = if std::env::var_os("PERP_EXEC_WARM_OFF").is_some() || warm_addrs.is_empty()
+        {
+            ReplayReadSet::default()
+        } else {
+            ReplayReadSet::build(
+                &state_provider,
+                warm_addrs.iter().copied(),
+                env.evm_env.block_env.beneficiary,
+                PERP_DEX_ADDRESS,
+            )
+            .unwrap_or_default()
+        };
+        let warm_n = warm_rs.len();
+        let warm_ms = warm_start.elapsed().as_secs_f64() * 1e3;
+
         let mut db = State::builder()
-            .with_database(PerpDb::new(StateProviderDatabase::new(&state_provider), Some(perp)))
+            .with_database(PerpDb::new(
+                WarmDb::new(warm_rs, StateProviderDatabase::new(&state_provider)),
+                Some(perp),
+            ))
             .with_bundle_update()
             .without_state_clear()
             .build();
@@ -1337,6 +1397,18 @@ where
         let execution_finish = Instant::now();
         let execution_time = execution_finish.duration_since(execution_start);
         debug!(target: "engine::tree", elapsed = ?execution_time, number=?num_hash.number, "Executed block");
+        if std::env::var_os("PERP_PROF").is_some() {
+            let warm = db.database.inner();
+            info!(
+                target: "engine::tree",
+                "PERP_PROF_WARM block={} addrs={} build_ms={:.3} hits={} misses={}",
+                num_hash.number,
+                warm_n,
+                warm_ms,
+                warm.hits,
+                warm.misses,
+            );
+        }
         Ok(output)
     }
 
