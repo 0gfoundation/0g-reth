@@ -1307,14 +1307,30 @@ where
         let validator = self.payload_validator_builder.build(ctx).await?;
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
         let invalid_block_hook = ctx.create_invalid_block_hook(&data_dir).await?;
-        Ok(BasicEngineValidator::new(
+        // Mempool-backed sender short-circuit for payload recovery: the pool recovered every tx
+        // it validated at ingress, so a hash hit hands the engine the sender without re-running
+        // ecrecover (~90µs/tx). Misses fall back to full recovery — pure CPU skip, zero
+        // consensus surface. `PERP_RECOVER_POOL_LOOKUP_OFF` disables it (A/B rail; the per-tx
+        // `pool.get` takes the pool read lock, which a write-heavy ingress storm could contend —
+        // PERP_PROF_RECOVER's recover_ms/pool_hits shows which effect wins).
+        let engine_validator = BasicEngineValidator::new(
             ctx.node.provider().clone(),
             std::sync::Arc::new(ctx.node.consensus().clone()),
             ctx.node.evm_config().clone(),
             validator,
             tree_config,
             invalid_block_hook,
-        ))
+        );
+        if std::env::var_os("PERP_RECOVER_POOL_LOOKUP_OFF").is_some() {
+            return Ok(engine_validator);
+        }
+        let pool = ctx.node.pool().clone();
+        let sender_lookup: std::sync::Arc<reth_evm::SenderLookup> =
+            std::sync::Arc::new(move |hash: &alloy_primitives::B256| {
+                use reth_transaction_pool::TransactionPool;
+                pool.get(hash).map(|tx| tx.sender())
+            });
+        Ok(engine_validator.with_sender_lookup(sender_lookup))
     }
 }
 

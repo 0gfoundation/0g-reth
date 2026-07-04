@@ -185,6 +185,11 @@ where
     perp_pool: Arc<PerpPool>,
     /// Worker count of `perp_pool` (sizes the parallel payload-recovery chunks).
     perp_pool_threads: usize,
+    /// tx-hash → already-recovered-sender short-circuit for payload recovery, typically backed by
+    /// the node's own mempool (which recovered every tx it validated at ingress). `None` → every
+    /// tx takes the full ecrecover path. See [`ConfigureEngineEvm::decode_payload_tx_with_lookup`].
+    #[debug(skip)]
+    sender_lookup: Option<Arc<reth_evm::SenderLookup>>,
 }
 
 impl<N, P, Evm, V> BasicEngineValidator<P, Evm, V>
@@ -247,7 +252,16 @@ where
             validator,
             perp_pool,
             perp_pool_threads,
+            sender_lookup: None,
         }
+    }
+
+    /// Installs a tx-hash → already-recovered-sender lookup (typically the node's mempool) that
+    /// lets payload recovery skip ecrecover on hits. Misses fall back to full recovery, so this
+    /// is a pure CPU short-circuit with zero consensus surface.
+    pub fn with_sender_lookup(mut self, lookup: Arc<reth_evm::SenderLookup>) -> Self {
+        self.sender_lookup = Some(lookup);
+        self
     }
 
     /// Converts a [`BlockOrPayload`] to a recovered block.
@@ -291,7 +305,7 @@ where
         &self,
         input: &BlockOrPayload<T>,
     ) -> Result<
-        (impl ExecutableTxIterator<Evm>, Vec<(Vec<u8>, alloy_primitives::Address)>),
+        (impl ExecutableTxIterator<Evm>, Vec<(Vec<u8>, alloy_primitives::Address)>, usize),
         NewPayloadError,
     >
     where
@@ -302,6 +316,25 @@ where
             BlockOrPayload::Payload(payload) => {
                 let encoded = self.evm_config.payload_txs_encoded(payload);
                 let n = encoded.len();
+                // Mempool-backed sender short-circuit (when installed): wrap it with a per-block
+                // hit counter for the PERP_PROF_RECOVER line. A hit skips the ~90µs ecrecover; a
+                // miss takes the full path, so the result is identical either way.
+                let pool_hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let lookup: Option<Arc<reth_evm::SenderLookup>> =
+                    self.sender_lookup.clone().map(|l| {
+                        let hits = pool_hits.clone();
+                        Arc::new(move |h: &B256| {
+                            let r = l(h);
+                            if r.is_some() {
+                                hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            r
+                        }) as Arc<reth_evm::SenderLookup>
+                    });
+                let decode = |cfg: &Evm, tx| match &lookup {
+                    Some(l) => cfg.decode_payload_tx_with_lookup(tx, l.as_ref()),
+                    None => cfg.decode_payload_tx(tx),
+                };
                 // Chunked fan-out — per-tx pool tasks would pay more dispatch than work (the #3
                 // lesson); ~2 chunks per worker balances tail skew vs dispatch. Small blocks decode
                 // inline (the pool round-trip isn't worth it).
@@ -309,7 +342,7 @@ where
                     if n <= 32 {
                         encoded
                             .into_iter()
-                            .map(|tx| self.evm_config.decode_payload_tx(tx))
+                            .map(|tx| decode(&self.evm_config, tx))
                             .collect::<Result<_, _>>()
                             .map_err(|e| NewPayloadError::Other(Box::new(e)))?
                     } else {
@@ -318,12 +351,18 @@ where
                             .chunks(chunk)
                             .map(|c| {
                                 let cfg = self.evm_config.clone();
+                                let lookup = lookup.clone();
                                 // `Bytes` clones are cheap (Arc-backed); the task must own its
                                 // chunk (`run_batch` requires 'static).
                                 let c = c.to_vec();
                                 move || {
                                     c.into_iter()
-                                        .map(|tx| cfg.decode_payload_tx(tx))
+                                        .map(|tx| match &lookup {
+                                            Some(l) => {
+                                                cfg.decode_payload_tx_with_lookup(tx, l.as_ref())
+                                            }
+                                            None => cfg.decode_payload_tx(tx),
+                                        })
                                         .collect::<Result<Vec<_>, _>>()
                                 }
                             })
@@ -335,6 +374,7 @@ where
                         }
                         recovered
                     };
+                let pool_hits = pool_hits.load(std::sync::atomic::Ordering::Relaxed);
                 let perp_calls = recovered
                     .iter()
                     .filter(|tx| tx.tx().to() == Some(PERP_DEX_ADDRESS))
@@ -347,6 +387,7 @@ where
                             .map(|tx| Ok::<_, core::convert::Infallible>(Either::Left(tx))),
                     ),
                     perp_calls,
+                    pool_hits,
                 ))
             }
             BlockOrPayload::Block(block) => {
@@ -365,6 +406,8 @@ where
                             .map(|tx| Ok::<_, core::convert::Infallible>(Either::Right(tx))),
                     ),
                     perp_calls,
+                    // Senders came recovered with the block — the lookup never runs here.
+                    0,
                 ))
             }
         }
@@ -532,16 +575,18 @@ where
         // iter_transactions channel) AND the perp prephase, which previously EACH re-ran the
         // ~90µs/tx ecrecover serially.
         let recover_start = std::env::var_os("PERP_PROF").is_some().then(Instant::now);
-        let (txs, perp_calls) = self.recovered_txs_for(&input)?;
+        let (txs, perp_calls, pool_hits) = self.recovered_txs_for(&input)?;
         if let Some(t) = recover_start {
             // Companion to the PERP_PROF prephase line: the recovery moved OUT of prephase_ms/scan_ms
             // (lever 1), so emit it separately to keep block-time accounting comparable across builds.
+            // `pool_hits` = txs whose sender came from the mempool lookup (ecrecover skipped).
             info!(
                 target: "engine::tree",
-                "PERP_PROF_RECOVER block={} recover_ms={:.3} perp_calls={}",
+                "PERP_PROF_RECOVER block={} recover_ms={:.3} perp_calls={} pool_hits={}",
                 block_num_hash.number,
                 t.elapsed().as_secs_f64() * 1e3,
-                perp_calls.len()
+                perp_calls.len(),
+                pool_hits
             );
         }
         let mut handle = if use_state_root_task {

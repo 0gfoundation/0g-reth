@@ -1,7 +1,11 @@
 use crate::{execute::ExecutableTxFor, ConfigureEvm, EvmEnvFor, ExecutionCtxFor};
 use alloc::vec::Vec;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes, B256};
 use reth_storage_errors::any::AnyError;
+
+/// A tx-hash → already-recovered-sender lookup (see
+/// [`ConfigureEngineEvm::decode_payload_tx_with_lookup`]).
+pub type SenderLookup = dyn Fn(&B256) -> Option<Address> + Send + Sync;
 
 /// [`ConfigureEvm`] extension providing methods for executing payloads.
 pub trait ConfigureEngineEvm<ExecutionData>: ConfigureEvm {
@@ -23,6 +27,22 @@ pub trait ConfigureEngineEvm<ExecutionData>: ConfigureEvm {
     /// (ecrecover dominates at ~90µs/tx serial); also the body of the serial
     /// [`Self::tx_iterator_for_payload`].
     fn decode_payload_tx(&self, encoded: Bytes) -> Result<Self::PayloadTx, AnyError>;
+
+    /// [`Self::decode_payload_tx`] with a sender short-circuit: `lookup` maps a tx hash to an
+    /// already-recovered sender (e.g. the node's own mempool, which recovered every tx it
+    /// validated at ingress). A hit skips the ~90µs ecrecover — safe because the hash commits to
+    /// the exact signed bytes, so the cached sender IS what `try_recover` would return for them;
+    /// a miss falls back to full recovery, so foreign/invalid txs behave exactly as before. Zero
+    /// consensus surface (pure CPU skip; node-local hit rates cannot change the result). The
+    /// default ignores the lookup.
+    fn decode_payload_tx_with_lookup(
+        &self,
+        encoded: Bytes,
+        lookup: &SenderLookup,
+    ) -> Result<Self::PayloadTx, AnyError> {
+        let _ = lookup;
+        self.decode_payload_tx(encoded)
+    }
 
     /// Returns an [`ExecutableTxIterator`] for the given payload.
     fn tx_iterator_for_payload(&self, payload: &ExecutionData) -> impl ExecutableTxIterator<Self>;

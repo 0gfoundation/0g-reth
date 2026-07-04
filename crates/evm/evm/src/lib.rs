@@ -45,7 +45,7 @@ mod aliases;
 pub use aliases::*;
 
 mod engine;
-pub use engine::{ConfigureEngineEvm, ExecutableTxIterator};
+pub use engine::{ConfigureEngineEvm, ExecutableTxIterator, SenderLookup};
 
 #[cfg(feature = "metrics")]
 pub mod metrics;

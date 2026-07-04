@@ -375,6 +375,22 @@ where
         Ok(tx.with_signer(signer))
     }
 
+    fn decode_payload_tx_with_lookup(
+        &self,
+        encoded: Bytes,
+        lookup: &reth_evm::SenderLookup,
+    ) -> Result<Self::PayloadTx, AnyError> {
+        let tx = TxTy::<Self::Primitives>::decode_2718_exact(encoded.as_ref())
+            .map_err(AnyError::new)?;
+        // The hash commits to the exact signed bytes, so a cached sender for it IS what
+        // `try_recover` would return; a miss (foreign/invalid tx) takes the full path.
+        if let Some(signer) = lookup(tx.tx_hash()) {
+            return Ok(tx.with_signer(signer));
+        }
+        let signer = tx.try_recover().map_err(AnyError::new)?;
+        Ok(tx.with_signer(signer))
+    }
+
     fn tx_iterator_for_payload(&self, payload: &ExecutionData) -> impl ExecutableTxIterator<Self> {
         let this = self.clone();
         self.payload_txs_encoded(payload).into_iter().map(move |tx| this.decode_payload_tx(tx))
