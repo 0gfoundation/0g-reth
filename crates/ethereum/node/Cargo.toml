@@ -53,6 +53,7 @@ revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg"] }
 
 # misc
 eyre.workspace = true
+alloy-primitives.workspace = true
 
 [dev-dependencies]
 reth-db.workspace = true

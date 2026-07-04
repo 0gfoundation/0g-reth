@@ -280,6 +280,28 @@ where
         }
     }
 
+    /// [`Self::convert_to_block`] with the block-order senders `recovered_txs_for` already
+    /// produced — the payload arm skips the redundant whole-block sender re-recovery (~12-15ms
+    /// rayon on a 1100-tx block, on the newPayload critical path). Wrong-length hints fall back
+    /// to full checked recovery inside the validator.
+    pub fn convert_to_block_with_senders<
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
+    >(
+        &self,
+        input: BlockOrPayload<T>,
+        senders: Vec<alloy_primitives::Address>,
+    ) -> Result<RecoveredBlock<N::Block>, NewPayloadError>
+    where
+        V: PayloadValidator<T, Block = N::Block>,
+    {
+        match input {
+            BlockOrPayload::Payload(payload) => {
+                self.validator.ensure_well_formed_payload_with_senders(payload, senders)
+            }
+            BlockOrPayload::Block(block) => Ok(block),
+        }
+    }
+
     /// Returns EVM environment for the given payload or block.
     pub fn evm_env_for<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
         &self,
@@ -311,6 +333,7 @@ where
             impl ExecutableTxIterator<Evm>,
             Vec<(Vec<u8>, alloy_primitives::Address)>,
             usize,
+            Vec<alloy_primitives::Address>,
             Vec<alloy_primitives::Address>,
         ),
         NewPayloadError,
@@ -397,8 +420,12 @@ where
                 // A2 stage-1 warm set: every address the block's txs name up front (senders +
                 // call targets) — the execution pass's account reads become memory hits.
                 let mut warm_addrs = Vec::with_capacity(recovered.len() * 2);
+                // Block-order senders, kept for the post-execution `convert_to_block` so it can
+                // skip the redundant whole-block re-recovery (they ARE `try_recover`'s output).
+                let mut senders = Vec::with_capacity(recovered.len());
                 for tx in &recovered {
                     warm_addrs.push(*tx.signer());
+                    senders.push(*tx.signer());
                     if let Some(to) = tx.tx().to() {
                         warm_addrs.push(to);
                     }
@@ -412,6 +439,7 @@ where
                     perp_calls,
                     pool_hits,
                     warm_addrs,
+                    senders,
                 ))
             }
             BlockOrPayload::Block(block) => {
@@ -440,6 +468,9 @@ where
                     // Senders came recovered with the block — the lookup never runs here.
                     0,
                     warm_addrs,
+                    // The block arm's convert_to_block returns the already-recovered block
+                    // untouched, so the senders hint is never consulted.
+                    Vec::new(),
                 ))
             }
         }
@@ -607,7 +638,7 @@ where
         // iter_transactions channel) AND the perp prephase, which previously EACH re-ran the
         // ~90µs/tx ecrecover serially.
         let recover_start = std::env::var_os("PERP_PROF").is_some().then(Instant::now);
-        let (txs, perp_calls, pool_hits, warm_addrs) = self.recovered_txs_for(&input)?;
+        let (txs, perp_calls, pool_hits, warm_addrs, senders) = self.recovered_txs_for(&input)?;
         if let Some(t) = recover_start {
             // Companion to the PERP_PROF prephase line: the recovery moved OUT of prephase_ms/scan_ms
             // (lever 1), so emit it separately to keep block-time accounting comparable across builds.
@@ -723,7 +754,7 @@ where
         // after executing the block we can stop executing transactions
         handle.stop_prewarming_execution();
 
-        let mut block = self.convert_to_block(input)?;
+        let mut block = self.convert_to_block_with_senders(input, senders)?;
 
         // A helper macro that returns the block in case there was an error
         macro_rules! ensure_ok {

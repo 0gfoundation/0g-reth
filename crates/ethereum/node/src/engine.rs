@@ -50,6 +50,23 @@ where
         let sealed_block = self.inner.ensure_well_formed_payload(payload)?;
         sealed_block.try_recover().map_err(|e| NewPayloadError::Other(e.into()))
     }
+
+    fn ensure_well_formed_payload_with_senders(
+        &self,
+        payload: ExecutionData,
+        senders: Vec<alloy_primitives::Address>,
+    ) -> Result<RecoveredBlock<Self::Block>, NewPayloadError> {
+        // Structural/consensus validation is unchanged; only the whole-block sender re-recovery
+        // is skipped. The senders were produced by CHECKED recovery (engine ecrecover or the
+        // mempool's ingress validation) of the exact bytes this payload carries, so pairing them
+        // is byte-identical to `try_recover`. Count mismatch -> full checked recovery.
+        let sealed_block = self.inner.ensure_well_formed_payload(payload)?;
+        if sealed_block.transaction_count() == senders.len() {
+            Ok(RecoveredBlock::new_sealed(sealed_block, senders))
+        } else {
+            sealed_block.try_recover().map_err(|e| NewPayloadError::Other(e.into()))
+        }
+    }
 }
 
 impl<ChainSpec, Types> EngineApiValidator<Types> for EthereumEngineValidator<ChainSpec>

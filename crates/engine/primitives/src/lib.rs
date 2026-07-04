@@ -144,6 +144,21 @@ pub trait PayloadValidator<Types: PayloadTypes>: Send + Sync + Unpin + 'static {
         payload: Types::ExecutionData,
     ) -> Result<RecoveredBlock<Self::Block>, NewPayloadError>;
 
+    /// [`Self::ensure_well_formed_payload`] with ALREADY-RECOVERED senders (block order): the
+    /// engine recovers every payload tx once up front (checked recovery, or the mempool's checked
+    /// ingress recovery of the exact same bytes), so implementations can skip the redundant
+    /// whole-block re-recovery (~12-15ms rayon on a 1100-tx block, on the newPayload critical
+    /// path). Implementations MUST fall back to full checked recovery when the sender count does
+    /// not match the payload's transactions. The default ignores the hint.
+    fn ensure_well_formed_payload_with_senders(
+        &self,
+        payload: Types::ExecutionData,
+        senders: alloc::vec::Vec<alloy_primitives::Address>,
+    ) -> Result<RecoveredBlock<Self::Block>, NewPayloadError> {
+        let _ = senders;
+        self.ensure_well_formed_payload(payload)
+    }
+
     /// Verifies payload post-execution w.r.t. hashed state updates.
     fn validate_block_post_execution_with_hashed_state(
         &self,
