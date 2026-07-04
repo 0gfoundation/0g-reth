@@ -437,10 +437,20 @@ where
             Ok(PackOutcome::Included { saturated_blobs })
         };
 
+        // Gas-full early break (flame 2026-07-04, `pack-flame-attribution-20260704.md`): once the
+        // block is full, every popped candidate returns `ExceedsGasLimit` → `mark_invalid` cascade,
+        // and stock reth DRAINS the whole sender frontier this way hoping a smaller tx fits
+        // (~10k pops × BTreeMap ops × 2 passes ≈ 40ms/block on the deep tune pool). After K
+        // CONSECUTIVE gas rejections the frontier's fee-top is saturated with over-limit txs —
+        // stop looking. Building is proposer-LOCAL (not a consensus rule); the worst case is a
+        // slightly under-filled block when a smaller tx hides deeper in the fee order.
+        const GAS_FULL_BREAK_AFTER: usize = 32;
+
         // Pass 1: on closed blocks, pack only PerpDEX txs (deferring everything else via
         // `mark_invalid`, which cascades their same-sender descendants out of this iterator
         // only — the pool itself is unaffected). On open blocks, pack everything normally.
         let mut best_txs_pass1 = best_txs(BestTransactionsAttributes::new(base_fee, blob_gasprice));
+        let mut consecutive_gas_full = 0usize;
         while let Some(pool_tx) = best_txs_pass1.next() {
             if !is_open_block && pool_tx.to() != Some(PERP_DEX_ADDRESS) {
                 best_txs_pass1.mark_invalid(&pool_tx, InvalidPoolTransactionError::Underpriced);
@@ -448,6 +458,7 @@ where
             }
             match try_pack(pool_tx.clone())? {
                 PackOutcome::Included { saturated_blobs } => {
+                    consecutive_gas_full = 0;
                     if !is_open_block {
                         included_hashes.insert(*pool_tx.hash());
                     }
@@ -456,7 +467,15 @@ where
                     }
                 }
                 PackOutcome::Invalid(err) => {
+                    let gas_full =
+                        matches!(err, InvalidPoolTransactionError::ExceedsGasLimit(_, _));
                     best_txs_pass1.mark_invalid(&pool_tx, err);
+                    if gas_full {
+                        consecutive_gas_full += 1;
+                        if consecutive_gas_full >= GAS_FULL_BREAK_AFTER {
+                            break;
+                        }
+                    }
                 }
                 PackOutcome::Skip => {}
                 PackOutcome::Cancelled => return Ok(BuildOutcome::Cancelled),
@@ -472,18 +491,28 @@ where
             let mut best_txs_pass2 = pool.best_transactions_with_attributes(
                 BestTransactionsAttributes::new(base_fee, blob_gasprice),
             );
+            let mut consecutive_gas_full = 0usize;
             while let Some(pool_tx) = best_txs_pass2.next() {
                 if included_hashes.contains(pool_tx.hash()) {
                     continue;
                 }
                 match try_pack(pool_tx.clone())? {
                     PackOutcome::Included { saturated_blobs } => {
+                        consecutive_gas_full = 0;
                         if saturated_blobs {
                             best_txs_pass2.skip_blobs();
                         }
                     }
                     PackOutcome::Invalid(err) => {
+                        let gas_full =
+                            matches!(err, InvalidPoolTransactionError::ExceedsGasLimit(_, _));
                         best_txs_pass2.mark_invalid(&pool_tx, err);
+                        if gas_full {
+                            consecutive_gas_full += 1;
+                            if consecutive_gas_full >= GAS_FULL_BREAK_AFTER {
+                                break;
+                            }
+                        }
                     }
                     PackOutcome::Skip => {}
                     PackOutcome::Cancelled => return Ok(BuildOutcome::Cancelled),
