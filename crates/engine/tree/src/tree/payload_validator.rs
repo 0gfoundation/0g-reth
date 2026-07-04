@@ -783,6 +783,7 @@ where
             warn!(target: "engine::tree", ?block, "Failed to validate header {} against parent: {e}", block.hash());
             return Err(InsertBlockError::new(block.into_sealed_block(), e.into()).into())
         }
+        let np_hdr_ms = np_prof.map(|_| post_execution_start.elapsed().as_secs_f64() * 1e3);
 
         if let Err(err) = self.consensus.validate_block_post_execution(&mut block, &output) {
             // call post-block hook
@@ -792,6 +793,10 @@ where
 
         let np_validate_ms = np_prof
             .map(|_| post_execution_start.elapsed().as_secs_f64() * 1e3);
+        // np_validate_ms covers BOTH the header consensus checks and
+        // consensus.validate_block_post_execution (receipts root + logs bloom over the whole
+        // block — the prime suspect for the 70.7ms@2222tx measured in the np-attribution
+        // window). np_hdr_ms below isolates the header half; postexec = validate − hdr.
 
         let hashed_state = self.provider.hashed_post_state(&output.state);
         let np_hashed_ms = np_prof
@@ -937,10 +942,12 @@ where
             let root = root_elapsed.as_secs_f64() * 1e3;
             info!(
                 target: "engine::tree",
-                "PERP_PROF_NP block={} convert_ms={:.3} validate_ms={:.3} hashed_ms={:.3} root_wait_ms={:.3} tail_ms={:.3} total_ms={:.3}",
+                "PERP_PROF_NP block={} convert_ms={:.3} validate_ms={:.3} hdr_ms={:.3} postexec_ms={:.3} hashed_ms={:.3} root_wait_ms={:.3} tail_ms={:.3} total_ms={:.3}",
                 block_num_hash.number,
                 convert,
                 validate,
+                np_hdr_ms.unwrap_or(0.0),
+                (validate - np_hdr_ms.unwrap_or(0.0)).max(0.0),
                 hashed,
                 root,
                 (total - convert - validate - hashed - root).max(0.0),

@@ -1351,7 +1351,28 @@ where
                                 }
                             }
                             BeaconEngineMessage::NewPayload { payload, tx } => {
+                                // PERP_PROF_NPCALL: per-CALL wall time inside the tree task.
+                                // Two calls land per height (process + commit-time); the one
+                                // WITHOUT a matching PERP_PROF_NP line is the dedup/short-circuit
+                                // call — this line pins its true cost (np-attribution window
+                                // implied ~104ms/call#2 at 2222tx; queueing vs work unknown).
+                                let np_call_prof = std::env::var_os("PERP_PROF")
+                                    .is_some()
+                                    .then(|| (std::time::Instant::now(), payload.num_hash()));
                                 let mut output = self.on_new_payload(payload);
+                                if let Some((t0, nh)) = np_call_prof {
+                                    info!(
+                                        target: "engine::tree",
+                                        "PERP_PROF_NPCALL block={} hash={} elapsed_ms={:.3} status={}",
+                                        nh.number,
+                                        nh.hash,
+                                        t0.elapsed().as_secs_f64() * 1e3,
+                                        output
+                                            .as_ref()
+                                            .map(|o| o.outcome.status.to_string())
+                                            .unwrap_or_else(|_| "err".into()),
+                                    );
+                                }
 
                                 let maybe_event =
                                     output.as_mut().ok().and_then(|out| out.event.take());
