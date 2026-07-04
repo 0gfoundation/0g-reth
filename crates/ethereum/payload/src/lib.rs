@@ -189,6 +189,15 @@ where
     // when multiple transactions from the same sender are included in the block
     let mut sender_cumulative_gas_cost: HashMap<Address, U256> = HashMap::new();
 
+    // Per-sender committed-account memo (catalog V3). `basic_account` goes straight to the
+    // provider — bypassing cached_reads, and caching is disabled on this deployment — so the
+    // per-candidate read was a full mdbx round-trip each time. The committed snapshot cannot
+    // change within a build job, so one read per sender is exact; `Err` memoizes as `None`
+    // (same skip-the-checks behavior as before). Biggest win on relayer-shaped flows
+    // (hundreds of txs per sender per block); also dedups across the two modulus passes.
+    let mut sender_accounts: HashMap<Address, Option<reth_primitives_traits::Account>> =
+        HashMap::new();
+
     // Track the next nonce expected per sender within this build job. Initialized
     // lazily from chain state on first encounter, then incremented after each
     // accepted tx. Bidirectionally guards against stale (already-mined) and gap
@@ -330,8 +339,11 @@ where
             let new_cumulative_cost = current_cumulative_cost + tx_max_cost + tx.value();
 
             // Check if sender has sufficient balance for cumulative gas costs
-            // Query sender balance from the state provider
-            if let Ok(Some(sender_account)) = state_provider.basic_account(&sender) {
+            // Query sender balance from the state provider (memoized per sender — V3)
+            let sender_account = *sender_accounts
+                .entry(sender)
+                .or_insert_with(|| state_provider.basic_account(&sender).ok().flatten());
+            if let Some(sender_account) = sender_account {
                 let sender_balance = sender_account.balance;
 
                 // Bidirectional nonce guard. The pool iterator's independent set
