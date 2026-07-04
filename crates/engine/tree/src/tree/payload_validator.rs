@@ -186,10 +186,12 @@ where
     /// Worker count of `perp_pool` (sizes the parallel payload-recovery chunks).
     perp_pool_threads: usize,
     /// tx-hash → already-recovered-sender short-circuit for payload recovery, typically backed by
-    /// the node's own mempool (which recovered every tx it validated at ingress). `None` → every
-    /// tx takes the full ecrecover path. See [`ConfigureEngineEvm::decode_payload_tx_with_lookup`].
+    /// the node's own mempool (which recovered every tx it validated at ingress). BATCH interface:
+    /// one call per block = one pool-lock acquisition (the per-tx form's 1111 read-lock
+    /// acquisitions collided with ingress writes — recover_ms spikes on the A/B). `None` → every
+    /// tx takes the full ecrecover path.
     #[debug(skip)]
-    sender_lookup: Option<Arc<reth_evm::SenderLookup>>,
+    sender_lookup: Option<Arc<reth_evm::BatchSenderLookup>>,
 }
 
 impl<N, P, Evm, V> BasicEngineValidator<P, Evm, V>
@@ -256,10 +258,10 @@ where
         }
     }
 
-    /// Installs a tx-hash → already-recovered-sender lookup (typically the node's mempool) that
-    /// lets payload recovery skip ecrecover on hits. Misses fall back to full recovery, so this
-    /// is a pure CPU short-circuit with zero consensus surface.
-    pub fn with_sender_lookup(mut self, lookup: Arc<reth_evm::SenderLookup>) -> Self {
+    /// Installs a BATCH tx-hash → already-recovered-sender lookup (typically the node's mempool)
+    /// that lets payload recovery skip ecrecover on hits. Misses fall back to full recovery, so
+    /// this is a pure CPU short-circuit with zero consensus surface.
+    pub fn with_sender_lookup(mut self, lookup: Arc<reth_evm::BatchSenderLookup>) -> Self {
         self.sender_lookup = Some(lookup);
         self
     }
@@ -316,15 +318,22 @@ where
             BlockOrPayload::Payload(payload) => {
                 let encoded = self.evm_config.payload_txs_encoded(payload);
                 let n = encoded.len();
-                // Mempool-backed sender short-circuit (when installed): wrap it with a per-block
+                // Mempool-backed sender short-circuit (when installed). BATCH form: hash every
+                // encoded tx (a 2718 tx's hash IS keccak256 of its encoded envelope, legacy
+                // included — no decode needed), resolve the whole block in ONE lookup call (one
+                // pool-lock acquisition; the per-tx form's 1111 acquisitions collided with
+                // ingress writes), then hand the chunks a lock-free map closure with a per-block
                 // hit counter for the PERP_PROF_RECOVER line. A hit skips the ~90µs ecrecover; a
                 // miss takes the full path, so the result is identical either way.
                 let pool_hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 let lookup: Option<Arc<reth_evm::SenderLookup>> =
-                    self.sender_lookup.clone().map(|l| {
+                    self.sender_lookup.as_ref().map(|l| {
+                        let hashes: Vec<B256> =
+                            encoded.iter().map(|b| alloy_primitives::keccak256(b)).collect();
+                        let map = Arc::new(l(&hashes));
                         let hits = pool_hits.clone();
                         Arc::new(move |h: &B256| {
-                            let r = l(h);
+                            let r = map.get(h).copied();
                             if r.is_some() {
                                 hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }

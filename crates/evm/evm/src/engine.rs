@@ -7,6 +7,13 @@ use reth_storage_errors::any::AnyError;
 /// [`ConfigureEngineEvm::decode_payload_tx_with_lookup`]).
 pub type SenderLookup = dyn Fn(&B256) -> Option<Address> + Send + Sync;
 
+/// Batch form of [`SenderLookup`]: resolves a whole block's tx hashes in ONE call so the backing
+/// store (typically the mempool) is locked once per block instead of once per tx — the A/B on the
+/// per-tx form showed pool read-lock acquisitions colliding with ingress writes (recover_ms spikes
+/// 14-23ms only on the lookup arm).
+pub type BatchSenderLookup =
+    dyn Fn(&[B256]) -> alloy_primitives::map::HashMap<B256, Address> + Send + Sync;
+
 /// [`ConfigureEvm`] extension providing methods for executing payloads.
 pub trait ConfigureEngineEvm<ExecutionData>: ConfigureEvm {
     /// The recovered executable transaction type a decoded payload transaction yields (the item

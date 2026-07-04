@@ -1325,10 +1325,15 @@ where
             return Ok(engine_validator);
         }
         let pool = ctx.node.pool().clone();
-        let sender_lookup: std::sync::Arc<reth_evm::SenderLookup> =
-            std::sync::Arc::new(move |hash: &alloy_primitives::B256| {
+        let sender_lookup: std::sync::Arc<reth_evm::BatchSenderLookup> =
+            std::sync::Arc::new(move |hashes: &[alloy_primitives::B256]| {
                 use reth_transaction_pool::TransactionPool;
-                pool.get(hash).map(|tx| tx.sender())
+                // One get_all = ONE pool read-lock acquisition for the whole block (the per-tx
+                // form's ~1100 acquisitions collided with ingress writes).
+                pool.get_all(hashes.to_vec())
+                    .into_iter()
+                    .map(|tx| (*tx.hash(), tx.sender()))
+                    .collect()
             });
         Ok(engine_validator.with_sender_lookup(sender_lookup))
     }
