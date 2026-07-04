@@ -63,6 +63,7 @@ pub mod error;
 mod instrumented_state;
 mod invalid_headers;
 mod metrics;
+mod parallel_replay;
 mod payload_processor;
 pub mod payload_validator;
 mod persistence_state;

@@ -5,6 +5,7 @@ use crate::tree::{
     error::{InsertBlockError, InsertBlockErrorKind, InsertPayloadError},
     executor::WorkloadExecutor,
     instrumented_state::InstrumentedStateProvider,
+    parallel_replay::{shadow_parallel_replay, ReplayReadSet},
     payload_processor::PayloadProcessor,
     persistence_state::CurrentPersistenceAction,
     precompile_cache::{CachedPrecompile, CachedPrecompileMetrics, PrecompileCacheMap},
@@ -1072,7 +1073,10 @@ where
         state_provider: S,
         env: ExecutionEnv<Evm>,
         input: &BlockOrPayload<T>,
-        handle: &mut PayloadHandle<impl ExecutableTxFor<Evm>, Err>,
+        // `Clone + Send + 'static` (satisfied by every handle tx type — see
+        // `ExecutableTxIterator::Tx` + `TransactionEnv`) lets the A1 shadow clone the block's txs
+        // for its parallel workers; the serial path never clones.
+        handle: &mut PayloadHandle<impl ExecutableTxFor<Evm> + Clone + Send + 'static, Err>,
         // Off-trie PerpDEX ("PerpState") committed-store read handle; wraps the execution DB in
         // `PerpDb` so the EVM's perp cold-read resolves to `canonical_perp` (off the state trie).
         perp: PerpHandle,
@@ -1150,8 +1154,18 @@ where
         // shared book BEFORE the serial EVM pass, which then REPLAYS the pre-computed results. `perp`
         // is borrowed here (it is moved into `PerpDb` below). `(empty, None)` for a block with no perp
         // trades → the serial path runs unchanged.
+        let n_perp_calls = perp_calls.len();
         let (perp_replay, perp_book) =
             self.perp_parallel_prephase(perp_calls, &env.evm_env.block_env, &perp)?;
+
+        // L2-2 Phase A1 (env PERP_REPLAY_SHADOW): shadow-gate precheck. A parallelized block
+        // (`perp_book.is_some()`) has a replay result for EVERY perp call; the remaining gate —
+        // every tx in the block IS a perp trading call — is checked below once the tx stream is
+        // materialized. Small blocks skip (dispatch would swamp the signal).
+        let shadow_replay = (std::env::var_os("PERP_REPLAY_SHADOW").is_some()
+            && perp_book.is_some()
+            && n_perp_calls >= 64)
+            .then(|| perp_replay.clone());
 
         let mut db = State::builder()
             .with_database(PerpDb::new(StateProviderDatabase::new(&state_provider), Some(perp)))
@@ -1182,13 +1196,90 @@ where
 
         let execution_start = Instant::now();
         let state_hook = Box::new(handle.state_hook());
-        let output = self.metrics.execute_metered(
-            executor,
-            handle.iter_transactions().map(|res| res.map_err(BlockExecutionError::other)),
-            state_hook,
-            perp_replay,
-            perp_book,
-        )?;
+        let output = if let Some(shadow_replay) = shadow_replay {
+            // A1 shadow arm: materialize the tx stream first (lever 1 already recovered every tx —
+            // the channel only forwards), so the block's txs can be cloned for the shadow workers.
+            let collected: Vec<_> = handle.iter_transactions().collect();
+            // Final shadow gate: the replay vec is 1:1 with the block's txs (⇒ every tx is a perp
+            // trading call — non-perp txs would make it shorter) and the stream carried no error.
+            let shadow_txs = (collected.len() == shadow_replay.len())
+                .then(|| {
+                    collected.iter().filter_map(|r| r.as_ref().ok()).cloned().collect::<Vec<_>>()
+                })
+                .filter(|txs| txs.len() == shadow_replay.len());
+            let output = self.metrics.execute_metered(
+                executor,
+                collected.into_iter().map(|res| res.map_err(BlockExecutionError::other)),
+                state_hook,
+                perp_replay,
+                perp_book,
+            )?;
+            // The serial pass stays authoritative; the shadow re-executes the SAME block on the
+            // pre-materialized read-set and reports wall time + fail-stop misses + a gas digest.
+            // Runs AFTER the serial pass (reads only committed pre-block state, so order is
+            // irrelevant to correctness) to keep the measured serial exec window undisturbed.
+            if let Some(shadow_txs) = shadow_txs {
+                let rs_start = Instant::now();
+                let read_set = ReplayReadSet::build(
+                    &state_provider,
+                    shadow_txs.iter().map(|t| *t.signer()),
+                    env.evm_env.block_env.beneficiary,
+                    PERP_DEX_ADDRESS,
+                );
+                let rs_ms = rs_start.elapsed().as_secs_f64() * 1e3;
+                match read_set {
+                    Some(rs) => {
+                        let stats = shadow_parallel_replay(
+                            &self.perp_pool,
+                            self.perp_pool_threads,
+                            &self.evm_config,
+                            env.evm_env.clone(),
+                            &shadow_txs,
+                            &shadow_replay,
+                            Arc::new(rs),
+                        );
+                        let gas_serial = output.result.gas_used;
+                        info!(
+                            target: "engine::tree",
+                            "PERP_PROF_REPLAY_SHADOW block={} n={} tasks={} rs_ms={:.3} wall_ms={:.3} misses={} ok={} reverted={} errors={} gas_shadow={} gas_serial={} gas_match={}",
+                            num_hash.number,
+                            stats.n_txs,
+                            stats.n_tasks,
+                            rs_ms,
+                            stats.wall_ms,
+                            stats.misses,
+                            stats.ok,
+                            stats.reverted,
+                            stats.errors,
+                            stats.gas_sum,
+                            gas_serial,
+                            stats.gas_sum == gas_serial,
+                        );
+                    }
+                    None => info!(
+                        target: "engine::tree",
+                        "PERP_PROF_REPLAY_SHADOW block={} skipped=readset_build_failed rs_ms={:.3}",
+                        num_hash.number,
+                        rs_ms,
+                    ),
+                }
+            } else {
+                info!(
+                    target: "engine::tree",
+                    "PERP_PROF_REPLAY_SHADOW block={} skipped=mixed_block_or_stream_error",
+                    num_hash.number,
+                );
+            }
+            output
+        } else {
+            self.metrics.execute_metered(
+                executor,
+                handle.iter_transactions().map(|res| res.map_err(BlockExecutionError::other)),
+                state_hook,
+                perp_replay,
+                perp_book,
+            )?
+        };
         let execution_finish = Instant::now();
         let execution_time = execution_finish.duration_since(execution_start);
         debug!(target: "engine::tree", elapsed = ?execution_time, number=?num_hash.number, "Executed block");
