@@ -719,7 +719,10 @@ where
         // block's account targets to the multiproof task NOW so proof fetching overlaps
         // prephase + execution. `PERP_PROOF_PREFETCH_OFF` disables (A/B rail). No-op when the
         // state-root task isn't running.
-        if std::env::var_os("PERP_PROOF_PREFETCH_OFF").is_none() && !warm_addrs.is_empty() {
+        // DEFAULT OFF since the 2026-07-05 verdict (steady-state root_wait +50%, catastrophic
+        // amplification on mass-account-creation blocks — see root-lag-verdict doc §4). The
+        // machinery stays for opt-in experiments (PERP_PROOF_PREFETCH_ON).
+        if std::env::var_os("PERP_PROOF_PREFETCH_ON").is_some() && !warm_addrs.is_empty() {
             let targets = reth_trie::MultiProofTargets::accounts(
                 warm_addrs
                     .iter()
