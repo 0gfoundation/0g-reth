@@ -446,6 +446,19 @@ impl<Tx, Err> PayloadHandle<Tx, Err> {
             .map_err(|_| ParallelStateRootError::Other("sparse trie task dropped".to_string()))?
     }
 
+    /// Sends an UP-FRONT proof prefetch to the multiproof task. On this chain the block's
+    /// write-set is known at spawn time (tx senders + call targets + beneficiary + the 0x1003
+    /// perp account), so the proof fetching can start immediately and overlap the whole
+    /// prephase/execution stretch — instead of trailing the serial execution stream one
+    /// state-update at a time. With prewarming disabled (this deployment), NOTHING else ever
+    /// sends `PrefetchProofs`, which is exactly why the root task lagged ~183ms behind
+    /// execution end (np/npcall windows 2026-07-04). No-op when no root task is running.
+    pub fn prefetch_proofs(&self, targets: reth_trie::MultiProofTargets) {
+        if let Some(tx) = &self.to_multi_proof {
+            let _ = tx.send(MultiProofMessage::PrefetchProofs(targets));
+        }
+    }
+
     /// Returns a state hook to be used to send state updates to this task.
     ///
     /// If a multiproof task is spawned the hook will notify it about new states.

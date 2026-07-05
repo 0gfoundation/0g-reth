@@ -713,6 +713,22 @@ where
             handle
         };
 
+        // Root-lag fix (np/npcall verdicts 2026-07-04: root task trailed execution end by
+        // ~183ms because, with prewarming disabled, proof targets only arrive via the serial
+        // execution stream): the write-set is KNOWN up front on this chain — hand the whole
+        // block's account targets to the multiproof task NOW so proof fetching overlaps
+        // prephase + execution. `PERP_PROOF_PREFETCH_OFF` disables (A/B rail). No-op when the
+        // state-root task isn't running.
+        if std::env::var_os("PERP_PROOF_PREFETCH_OFF").is_none() && !warm_addrs.is_empty() {
+            let targets = reth_trie::MultiProofTargets::accounts(
+                warm_addrs
+                    .iter()
+                    .chain([&env.evm_env.block_env.beneficiary, &PERP_DEX_ADDRESS])
+                    .map(|a| alloy_primitives::keccak256(a)),
+            );
+            handle.prefetch_proofs(targets);
+        }
+
         // Use cached state provider before executing, used in execution after prewarming threads
         // complete
         let state_provider = CachedStateProvider::new_with_caches(
