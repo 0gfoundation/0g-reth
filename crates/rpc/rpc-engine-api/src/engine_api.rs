@@ -370,6 +370,17 @@ where
         let res = Self::fork_choice_updated_v3(self, state, payload_attrs).await;
         self.inner.metrics.latency.fork_choice_updated_v3.record(start.elapsed());
         self.inner.metrics.fcu_response.update_response_metrics(&res);
+        // PERP_PROF_FCU: per-call reth-side wall time at the RPC entry (closest tick to the
+        // wire). Gantt v3: CL-view minus this = pure engine-API transport/serialization (the
+        // ~80ms/block hop suspect, p05 telemetry).
+        if std::env::var_os("PERP_PROF").is_some() {
+            tracing::info!(
+                target: "engine::rpc",
+                "PERP_PROF_FCU head={} elapsed_ms={:.3}",
+                state.head_block_hash,
+                start.elapsed().as_secs_f64() * 1e3,
+            );
+        }
         res
     }
 
@@ -509,6 +520,15 @@ where
         let start = Instant::now();
         let res = Self::get_payload_v4(self, payload_id).await;
         self.inner.metrics.latency.get_payload_v4.record(start.elapsed());
+        // PERP_PROF_GP: per-call reth-side getPayload wall time (Gantt v3 tick; see PERP_PROF_FCU).
+        if std::env::var_os("PERP_PROF").is_some() {
+            tracing::info!(
+                target: "engine::rpc",
+                "PERP_PROF_GP payload_id={} elapsed_ms={:.3}",
+                payload_id,
+                start.elapsed().as_secs_f64() * 1e3,
+            );
+        }
         res
     }
 
