@@ -62,6 +62,8 @@ std = [
     "alloy-rpc-types-engine/std",
     "reth-storage-errors/std",
     "reth-0g-bridge/std",
+    "alloy-sol-types/std",
+    "tracing/std"
 ]
 test-utils = [
     "dep:parking_lot",

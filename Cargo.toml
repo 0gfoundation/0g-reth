@@ -732,8 +732,8 @@ op-revm = { git = "https://github.com/0gfoundation/revm", rev = "6ba11f7052fa3de
 # For local development, replace both lines with path pins:
 #   alloy-evm = { path = "../alloy-evm/crates/evm" }
 #   alloy-op-evm = { path = "../alloy-evm/crates/op-evm" }
-alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "ca651ea73e602e9ab5d475fe53362dcbed73beb3" }
-alloy-op-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "ca651ea73e602e9ab5d475fe53362dcbed73beb3", package = "alloy-op-evm" }
+alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "0a5abc200bdb1ee5f2599ad2f89859711ed094c4" }
+alloy-op-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "0a5abc200bdb1ee5f2599ad2f89859711ed094c4", package = "alloy-op-evm" }
 
 # Patch alloy 1.0.35 with 0g-alloy
 alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy", rev = "1d31c4b9af739d44eef2758d06e2339225fe510b", package = "alloy-consensus" }

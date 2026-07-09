@@ -30,4 +30,5 @@ std = [
     "alloy-primitives/std",
     "alloy-sol-types/std",
     "thiserror/std",
+    "tracing/std"
 ]
