@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, BlockHeaderMut, TxReceipt};
-use alloy_eips::{eip7685::Requests, Encodable2718};
+use alloy_eips::eip7685::Requests;
 use alloy_primitives::{Bloom, Bytes, B256};
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::ConsensusError;
@@ -23,30 +23,11 @@ where
 {
     let mut header = block.header().clone();
 
-    // Print each receipt during cumulative_gas_used calculation
-    tracing::info!(
-        target: "consensus::validation",
-        block_number = block.header().number(),
-        receipts_count = receipts.len(),
-        "Starting to process receipts for cumulative_gas_used calculation"
-    );
-
-    for (idx, receipt) in receipts.iter().enumerate() {
-        tracing::info!(
-            target: "consensus::validation",
-            block_number = block.header().number(),
-            receipt_index = idx,
-            cumulative_gas_used = receipt.cumulative_gas_used(),
-            success = receipt.status(),
-            "Receipt details during cumulative_gas_used calculation"
-        );
-    }
-
     // Check if gas used matches the value set in header.
     let cumulative_gas_used =
         receipts.last().map(|receipt| receipt.cumulative_gas_used()).unwrap_or(0);
 
-    tracing::info!(
+    tracing::debug!(
         target: "consensus::validation",
         block_number = block.header().number(),
         final_cumulative_gas_used = cumulative_gas_used,
@@ -58,7 +39,7 @@ where
         // Update header with actual gas used from execution
         // This is expected because proposal uses gas_limit while validation uses actual execution result
         header.set_gas_used(cumulative_gas_used);
-        tracing::info!(
+        tracing::debug!(
             target: "consensus::validation",
             block_number = block.header().number(),
             block_hash = ?block.hash(),
