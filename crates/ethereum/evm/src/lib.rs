@@ -17,7 +17,7 @@
 
 extern crate alloc;
 
-use alloc::{borrow::Cow, sync::Arc};
+use alloc::{borrow::Cow, sync::Arc, vec, vec::Vec};
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::Decodable2718;
 pub use alloy_evm::EthEvm;
@@ -35,7 +35,8 @@ use reth_evm::{
     ExecutableTxIterator, ExecutionCtxFor, NextBlockEnvAttributes, TransactionEnv,
 };
 use reth_primitives_traits::{
-    constants::MAX_TX_GAS_LIMIT_OSAKA, SealedBlock, SealedHeader, SignedTransaction, TxTy,
+    constants::MAX_TX_GAS_LIMIT_OSAKA, transaction::recover::recover_signers, SealedBlock,
+    SealedHeader, SignedTransaction, TxTy,
 };
 use reth_storage_errors::any::AnyError;
 use revm::{
@@ -363,12 +364,39 @@ where
     }
 
     fn tx_iterator_for_payload(&self, payload: &ExecutionData) -> impl ExecutableTxIterator<Self> {
-        payload.payload.transactions().clone().into_iter().map(|tx| {
-            let tx =
-                TxTy::<Self::Primitives>::decode_2718_exact(tx.as_ref()).map_err(AnyError::new)?;
-            let signer = tx.try_recover().map_err(AnyError::new)?;
-            Ok::<_, AnyError>(tx.with_signer(signer))
-        })
+        // Recover the payload's tx signers in parallel, up front — rather than lazily, one tx at
+        // a time, on the single feeder thread that streams txs to the executor. Sender recovery
+        // is pure per-tx secp256k1 (~40-90µs/tx) with no state dependency, so it parallelizes
+        // freely. `recover_signers` calls the *identical* `recover_signer()` the old per-tx
+        // `try_recover()` used, so recovered senders are byte-identical (consensus-neutral); under
+        // the node's `reth-primitives-traits/rayon` feature it fans the work across the rayon pool
+        // and collapses to sequential otherwise. Decoding stays sequential (cheap; recovery is the
+        // cost). This removes the per-tx recv-wait in which the executor was parked waiting for the
+        // single recovery thread — the dominant term in the on-chain execution segment.
+        let decoded = payload
+            .payload
+            .transactions()
+            .iter()
+            .map(|tx| {
+                TxTy::<Self::Primitives>::decode_2718_exact(tx.as_ref()).map_err(AnyError::new)
+            })
+            .collect::<Result<Vec<TxTy<Self::Primitives>>, AnyError>>();
+
+        // On any decode/recover failure, yield a single leading Err: the block is rejected
+        // wholesale either way, matching the old per-tx short-circuit's verdict (nothing is
+        // committed unless the whole block validates).
+        let recovered: Vec<Result<_, AnyError>> = match decoded {
+            Ok(txs) => match recover_signers(&txs).map_err(AnyError::new) {
+                Ok(signers) => txs
+                    .into_iter()
+                    .zip(signers)
+                    .map(|(tx, signer)| Ok(tx.with_signer(signer)))
+                    .collect(),
+                Err(e) => vec![Err(e)],
+            },
+            Err(e) => vec![Err(e)],
+        };
+        recovered.into_iter()
     }
 }
 
