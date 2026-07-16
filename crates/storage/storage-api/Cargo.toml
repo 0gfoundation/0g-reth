@@ -23,6 +23,7 @@ reth-stages-types.workspace = true
 reth-storage-errors.workspace = true
 reth-trie-common.workspace = true
 revm-database.workspace = true
+revm-context-interface.workspace = true
 reth-ethereum-primitives.workspace = true
 
 # ethereum

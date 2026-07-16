@@ -39,6 +39,7 @@ alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-consensus.workspace = true
 revm-database.workspace = true
+revm-context-interface.workspace = true
 revm-state = { workspace = true, optional = true }
 
 # tracing

@@ -3101,13 +3101,14 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypes> DatabaseProvider<TX, N> {
     /// it commits atomically with the block state.
     pub fn write_perp_state_delta(
         &self,
-        delta: &alloy_primitives::map::HashMap<B256, Vec<u8>>,
+        delta: &revm_context_interface::journaled_state::PerpDelta,
     ) -> ProviderResult<()> {
-        for (key, value) in delta {
-            if value.is_empty() {
+        // Persist canonical BYTES only (选项A): `decoded` is an in-memory cache, never on disk.
+        for (key, entry) in delta {
+            if entry.bytes.is_empty() {
                 self.tx.delete::<tables::PerpState>(*key, None)?;
             } else {
-                self.tx.put::<tables::PerpState>(*key, value.clone())?;
+                self.tx.put::<tables::PerpState>(*key, entry.bytes.clone())?;
             }
         }
         Ok(())
@@ -3153,17 +3154,21 @@ mod tests {
         let k1 = B256::with_last_byte(1);
         let k2 = B256::with_last_byte(2);
         let k3 = B256::with_last_byte(3);
-        let mut delta: HashMap<B256, Vec<u8>> = HashMap::default();
-        delta.insert(k1, vec![0xAA, 0xBB]);
-        delta.insert(k2, vec![0xCC]);
+        let ent = |b: Vec<u8>| revm_context_interface::journaled_state::PerpDeltaEntry {
+            decoded: None,
+            bytes: b,
+        };
+        let mut delta = revm_context_interface::journaled_state::PerpDelta::default();
+        delta.insert(k1, ent(vec![0xAA, 0xBB]));
+        delta.insert(k2, ent(vec![0xCC]));
 
         let provider_rw = factory.provider_rw().unwrap();
         provider_rw.write_perp_state_delta(&delta).unwrap();
         provider_rw.commit().unwrap();
 
         // delete k1 via empty-value delta, in a second commit.
-        let mut del: HashMap<B256, Vec<u8>> = HashMap::default();
-        del.insert(k1, Vec::new());
+        let mut del = revm_context_interface::journaled_state::PerpDelta::default();
+        del.insert(k1, revm_context_interface::journaled_state::PerpDeltaEntry { decoded: None, bytes: Vec::new() });
         let provider_rw = factory.provider_rw().unwrap();
         provider_rw.write_perp_state_delta(&del).unwrap();
         provider_rw.commit().unwrap();

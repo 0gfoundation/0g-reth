@@ -250,6 +250,20 @@ impl<DB: Database> Database for PerpDb<DB> {
     fn perp_storage(&mut self, key: B256) -> Result<alloc::vec::Vec<u8>, Self::Error> {
         Ok(self.perp_get(key))
     }
+
+    /// Off-trie PerpDEX cold read as an already-decoded shared struct (选项A): the committed
+    /// `canonical_perp` store retains the struct a prior block decoded, handed back as an `Arc`
+    /// clone (no deserialization). `None` = no decoded form (raw-byte / seeded key) → caller falls
+    /// back to `perp_storage` bytes + decode.
+    fn perp_load_arc(
+        &mut self,
+        key: B256,
+    ) -> Result<
+        Option<alloc::sync::Arc<revm::context_interface::journaled_state::PerpBlob>>,
+        Self::Error,
+    > {
+        Ok(self.perp.as_ref().and_then(|h| h.perp_get_arc(key)))
+    }
 }
 
 #[cfg(feature = "std")]

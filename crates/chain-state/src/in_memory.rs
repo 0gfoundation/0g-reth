@@ -17,6 +17,7 @@ use reth_primitives_traits::{
     SignedTransaction,
 };
 use reth_storage_api::{PerpHandle, PerpStateHandle, StateProviderBox};
+use revm_context_interface::journaled_state::{PerpBlob, PerpDelta};
 use reth_trie::{updates::TrieUpdates, HashedPostState};
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::{broadcast, watch};
@@ -146,7 +147,34 @@ pub(crate) struct CanonicalInMemoryStateInner<N: NodePrimitives> {
     /// [`CanonicalInMemoryState::merge_perp_delta`]); read by the EVM cold-read path. An empty
     /// value means the key is absent. Shared by every clone of [`CanonicalInMemoryState`] via
     /// the surrounding `Arc`.
-    pub(crate) canonical_perp: Arc<RwLock<HashMap<B256, Vec<u8>>>>,
+    pub(crate) canonical_perp: Arc<RwLock<HashMap<B256, PerpCanon>>>,
+}
+
+/// One committed off-trie PerpDEX entry in the in-memory store (选项A: cross-block live struct).
+///
+/// `bytes` is the canonical serialization — served to byte-path readers (RPC `perp_get`, the EVM
+/// `perp_storage` fallback) and identical to what the durable `PerpState` table holds. `decoded`
+/// is the already-parsed struct carried over from the block that wrote it (`PerpDeltaEntry::decoded`),
+/// handed to the EVM cold-read fast path (`perp_get_arc`) so future blocks skip deserialization.
+/// `decoded` is `None` for raw-byte writes and for keys seeded from disk at startup (which have no
+/// decoded form until rewritten) — those fall back to `bytes` + decode.
+#[derive(Clone)]
+pub struct PerpCanon {
+    /// Decoded struct for the cold-read fast path (`None` = bytes-only).
+    pub decoded: Option<Arc<PerpBlob>>,
+    /// Canonical bytes (byte-path readers + parity with the durable table).
+    pub bytes: Vec<u8>,
+}
+
+impl core::fmt::Debug for PerpCanon {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "PerpCanon {{ decoded: {}, bytes: {} }}",
+            if self.decoded.is_some() { "Some(..)" } else { "None" },
+            self.bytes.len()
+        )
+    }
 }
 
 impl<N: NodePrimitives> CanonicalInMemoryStateInner<N> {
@@ -168,11 +196,18 @@ impl<N: NodePrimitives> CanonicalInMemoryStateInner<N> {
 
 /// 把共享的 `canonical_perp` map 适配成 [`PerpStateHandle`] 读句柄。
 #[derive(Debug, Clone)]
-struct PerpStore(Arc<RwLock<HashMap<B256, Vec<u8>>>>);
+struct PerpStore(Arc<RwLock<HashMap<B256, PerpCanon>>>);
 
 impl PerpStateHandle for PerpStore {
     fn perp_get(&self, key: B256) -> Vec<u8> {
-        self.0.read().get(&key).cloned().unwrap_or_default()
+        self.0.read().get(&key).map(|c| c.bytes.clone()).unwrap_or_default()
+    }
+
+    fn perp_get_arc(&self, key: B256) -> Option<Arc<PerpBlob>> {
+        // Read lock held only for the Arc ref-count bump, then released. The returned Arc is an
+        // immutable snapshot: a later commit that replaces this key's entry swaps in a NEW Arc,
+        // leaving this one valid (ref-counted) — no data race, no re-decode.
+        self.0.read().get(&key).and_then(|c| c.decoded.clone())
     }
 }
 
@@ -245,7 +280,7 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     ///
     /// The same `Arc` is shared by every clone of this state (provider, engine tree, RPC), so
     /// this is also the read handle the EVM cold-read path uses.
-    pub fn canonical_perp(&self) -> Arc<RwLock<HashMap<B256, Vec<u8>>>> {
+    pub fn canonical_perp(&self) -> Arc<RwLock<HashMap<B256, PerpCanon>>> {
         self.inner.canonical_perp.clone()
     }
 
@@ -258,16 +293,22 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     ///
     /// An empty value deletes the key. Called when a block enters the canonical chain. No-op for
     /// an empty delta.
-    pub fn merge_perp_delta(&self, delta: &HashMap<B256, Vec<u8>>) {
+    pub fn merge_perp_delta(&self, delta: &PerpDelta) {
         if delta.is_empty() {
             return;
         }
         let mut store = self.inner.canonical_perp.write();
-        for (key, value) in delta {
-            if value.is_empty() {
+        for (key, entry) in delta {
+            if entry.bytes.is_empty() {
                 store.remove(key);
             } else {
-                store.insert(*key, value.clone());
+                // Store the decoded struct (选项A) beside the canonical bytes: byte parity for
+                // byte-path readers, decoded reuse for the cold-read fast path. Replacing the whole
+                // PerpCanon swaps in a fresh Arc — prior readers keep their immutable snapshot.
+                store.insert(
+                    *key,
+                    PerpCanon { decoded: entry.decoded.clone(), bytes: entry.bytes.clone() },
+                );
             }
         }
     }
@@ -277,7 +318,13 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     /// head); the unpersisted tail is then rebuilt by re-executing re-fed blocks. Unlike
     /// [`Self::merge_perp_delta`] this overwrites rather than merges.
     pub fn seed_perp(&self, map: HashMap<B256, Vec<u8>>) {
-        *self.inner.canonical_perp.write() = map;
+        // Seeded from durable bytes: no decoded form yet (decoded = None). Cold reads of a seeded
+        // key take the bytes + decode fallback until the key is next rewritten (then it gains a
+        // decoded struct via `merge_perp_delta`). Correctness-neutral; only the startup tail pays.
+        *self.inner.canonical_perp.write() = map
+            .into_iter()
+            .map(|(k, bytes)| (k, PerpCanon { decoded: None, bytes }))
+            .collect();
     }
 
     /// Returns the block hash corresponding to the given number.
@@ -1043,14 +1090,18 @@ mod tests {
         let key = B256::repeat_byte(7);
 
         // A non-empty value inserts/overwrites.
+        let ent = |b: Vec<u8>| revm_context_interface::journaled_state::PerpDeltaEntry {
+            decoded: None,
+            bytes: b,
+        };
         let mut delta = HashMap::default();
-        delta.insert(key, vec![1u8, 2, 3]);
+        delta.insert(key, ent(vec![1u8, 2, 3]));
         state.merge_perp_delta(&delta);
-        assert_eq!(state.canonical_perp().read().get(&key), Some(&vec![1u8, 2, 3]));
+        assert_eq!(state.canonical_perp().read().get(&key).map(|c| c.bytes.clone()), Some(vec![1u8, 2, 3]));
 
         // An empty value deletes the key.
         let mut delete = HashMap::default();
-        delete.insert(key, Vec::new());
+        delete.insert(key, ent(Vec::new()));
         state.merge_perp_delta(&delete);
         assert!(state.canonical_perp().read().get(&key).is_none());
 
@@ -1063,7 +1114,7 @@ mod tests {
     fn seed_perp_replaces_whole_map() {
         let state = CanonicalInMemoryState::<EthPrimitives>::empty();
         // pre-existing junk that seed must clear:
-        state.merge_perp_delta(&HashMap::from_iter([(B256::with_last_byte(9), vec![0xFF])]));
+        state.merge_perp_delta(&HashMap::from_iter([(B256::with_last_byte(9), revm_context_interface::journaled_state::PerpDeltaEntry { decoded: None, bytes: vec![0xFF] })]));
 
         let mut snapshot = HashMap::default();
         snapshot.insert(B256::with_last_byte(1), vec![0xAA]);
@@ -1072,8 +1123,8 @@ mod tests {
 
         let store = state.canonical_perp();
         let g = store.read();
-        assert_eq!(g.get(&B256::with_last_byte(1)), Some(&vec![0xAAu8]));
-        assert_eq!(g.get(&B256::with_last_byte(2)), Some(&vec![0xBBu8]));
+        assert_eq!(g.get(&B256::with_last_byte(1)).map(|c| c.bytes.clone()), Some(vec![0xAAu8]));
+        assert_eq!(g.get(&B256::with_last_byte(2)).map(|c| c.bytes.clone()), Some(vec![0xBBu8]));
         assert!(g.get(&B256::with_last_byte(9)).is_none()); // replaced, not merged
         assert_eq!(g.len(), 2);
     }
@@ -1083,7 +1134,7 @@ mod tests {
         let state = CanonicalInMemoryState::<EthPrimitives>::empty();
         let key = B256::with_last_byte(7);
         let mut delta = HashMap::default();
-        delta.insert(key, vec![9u8, 9]);
+        delta.insert(key, revm_context_interface::journaled_state::PerpDeltaEntry { decoded: None, bytes: vec![9u8, 9] });
         state.merge_perp_delta(&delta);
 
         let handle = state.canonical_perp_handle();

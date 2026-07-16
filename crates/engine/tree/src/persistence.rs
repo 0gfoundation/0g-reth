@@ -158,7 +158,7 @@ where
 
         if last_block_hash_num.is_some() {
             // Harvest each block's off-trie PerpDEX delta BEFORE `blocks` is moved into save_blocks.
-            let perp_deltas: Vec<alloy_primitives::map::HashMap<alloy_primitives::B256, Vec<u8>>> =
+            let perp_deltas: Vec<revm::context_interface::journaled_state::PerpDelta> =
                 blocks.iter().filter_map(|b| b.block.execution_output.perp.clone()).collect();
 
             let provider_rw = self.provider.database_provider_rw()?;
