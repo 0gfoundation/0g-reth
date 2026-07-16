@@ -11,7 +11,6 @@
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rlp::Encodable;
-use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig,
@@ -19,9 +18,9 @@ use reth_basic_payload_builder::{
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_errors::ConsensusError;
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
 use reth_evm::{
-    block::TxResult,
     execute::{BlockBuilder, BlockBuilderOutcome},
     ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
@@ -202,6 +201,7 @@ where
                 withdrawals: attributes.withdrawals.clone().map(Into::into),
                 extra_data: builder_config.extra_data.clone(),
                 slot_number: attributes.slot_number(),
+                bridge_request: attributes.bridge_requests.clone(),
             },
         )
         .map_err(PayloadBuilderError::other)?;
@@ -209,7 +209,7 @@ where
     debug!(target: "payload_builder", id=%payload_id, parent_header = ?parent_header.hash(), parent_number = parent_header.number, "building new payload");
     let mut cumulative_tx_gas_used = 0;
     let mut block_regular_gas_used = 0;
-    let mut block_state_gas_used = 0;
+    let block_state_gas_used = 0;
     let block_gas_limit: u64 = builder.evm_mut().block().gas_limit();
     let tx_gas_limit_cap = builder.evm_mut().cfg_env().tx_gas_limit_cap();
     let base_fee = builder.evm_mut().block().basefee();
@@ -478,6 +478,13 @@ where
         builder.finish(state_provider.as_ref(), None)?
     };
 
+    // 0G: `execution_result.requests` already contains the `0xf0` bridge entry (if any) —
+    // `EthBlockExecutor::finish` appends it from `EthBlockExecutionCtx.bridge_request_raw`
+    // before `EthBlockAssembler::assemble_block` reads `requests` to compute `requests_hash`.
+    // That is the **only** correct place to push: doing it here, post-`builder.finish()`,
+    // would leave the sealed `block.header.requests_hash` covering only deposits/withdrawals/
+    // consolidations while the wire response includes 0xf0, and the CL's re-assembled block
+    // hash would diverge from `payload.block_hash`.
     let requests = chain_spec
         .is_prague_active_at_timestamp(attributes.timestamp)
         .then_some(execution_result.requests);

@@ -11,8 +11,7 @@ use reth_db_api::{
     transaction::{DbTx, DbTxMut},
     DbTxUnwindExt,
 };
-use reth_db_models::StoredBlockSlashed;
-use reth_db_models::StoredBlockWithdrawals;
+use reth_db_models::{StoredBlockBridgeRequests, StoredBlockSlashed, StoredBlockWithdrawals};
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::{
     Block, BlockBody, FullBlockHeader, NodePrimitives, SignedTransaction,
@@ -109,6 +108,8 @@ where
         let mut withdrawals_cursor =
             provider.tx_ref().cursor_write::<tables::BlockWithdrawals>()?;
         let mut slashed_cursor = provider.tx_ref().cursor_write::<tables::BlockSlashed>()?;
+        let mut bridge_requests_cursor =
+            provider.tx_ref().cursor_write::<tables::BlockBridgeRequests>()?;
 
         for (block_number, body) in bodies {
             let Some(body) = body else { continue };
@@ -132,6 +133,16 @@ where
                     slashed_cursor.append(block_number, &StoredBlockSlashed { slashed })?;
                 }
             }
+
+            // Write the bridge-requests blob whenever present — verbatim, INCLUDING the
+            // 4-byte SSZ empty-list encoding. Row presence round-trips the body field's
+            // Some/None exactly: replay must re-emit the 0xf0 requests entry byte-identically
+            // for every post-Bridge block (the CL emits the entry even with zero messages),
+            // so an empty blob cannot be normalized away like empty withdrawals/slashed.
+            if let Some(bridge_requests) = body.bridge_requests.clone() {
+                bridge_requests_cursor
+                    .append(block_number, &StoredBlockBridgeRequests { bridge_requests })?;
+            }
         }
 
         Ok(())
@@ -144,6 +155,7 @@ where
     ) -> ProviderResult<()> {
         provider.tx_ref().unwind_table_by_num::<tables::BlockWithdrawals>(block)?;
         provider.tx_ref().unwind_table_by_num::<tables::BlockSlashed>(block)?;
+        provider.tx_ref().unwind_table_by_num::<tables::BlockBridgeRequests>(block)?;
         provider.tx_ref().unwind_table_by_num::<tables::BlockOmmers<H>>(block)?;
 
         Ok(())
@@ -168,6 +180,8 @@ where
 
         let mut withdrawals_cursor = provider.tx_ref().cursor_read::<tables::BlockWithdrawals>()?;
         let mut slashed_cursor = provider.tx_ref().cursor_read::<tables::BlockSlashed>()?;
+        let mut bridge_requests_cursor =
+            provider.tx_ref().cursor_read::<tables::BlockBridgeRequests>()?;
 
         let mut bodies = Vec::with_capacity(inputs.len());
 
@@ -188,6 +202,11 @@ where
                 .map(|(_, s)| s.slashed)
                 .filter(|s| !s.is_empty())
                 .map(Into::into);
+            // Row presence mirrors the body field exactly (every post-Bridge block has a row,
+            // pre-Bridge blocks have none), so no fork check is needed here and the blob —
+            // including the 4-byte empty-list encoding — round-trips verbatim.
+            let bridge_requests =
+                bridge_requests_cursor.seek_exact(header.number())?.map(|(_, b)| b.bridge_requests);
             let ommers = if chain_spec.is_paris_active_at_block(header.number()) {
                 Vec::new()
             } else {
@@ -199,7 +218,13 @@ where
                     .map(|(_, stored_ommers)| stored_ommers.ommers)
                     .unwrap_or_default()
             };
-            bodies.push(alloy_consensus::BlockBody { transactions, ommers, withdrawals, slashed });
+            bodies.push(alloy_consensus::BlockBody {
+                transactions,
+                ommers,
+                withdrawals,
+                slashed,
+                bridge_requests,
+            });
         }
 
         Ok(bodies)
@@ -270,6 +295,7 @@ where
                         .is_shanghai_active_at_timestamp(header.timestamp())
                         .then(Default::default),
                     slashed: None,
+                    bridge_requests: None,
                 }
             })
             .collect())

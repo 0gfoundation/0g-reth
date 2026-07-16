@@ -461,9 +461,17 @@ where
             parent_beacon_block_root: last_seg.ctx.parent_beacon_block_root,
             ommers: last_seg.ctx.ommers,
             withdrawals: last_seg.ctx.withdrawals.clone(),
+            // reth-v2.4.1 migration: `reth-bb` is new in v2.4.1, so its upstream literal only
+            // copies the fields upstream's `EthBlockExecutionCtx` has. 0G's alloy-evm fork adds
+            // `slashed`, `bridge_request`, `bridge_request_raw` and `timestamp`; all four are
+            // copied from the same last segment as every other field here.
+            slashed: last_seg.ctx.slashed.clone(),
+            bridge_request: last_seg.ctx.bridge_request.clone(),
+            bridge_request_raw: last_seg.ctx.bridge_request_raw.clone(),
             extra_data: last_seg.ctx.extra_data.clone(),
             tx_count_hint: last_seg.ctx.tx_count_hint,
             slot_number: last_seg.ctx.slot_number,
+            timestamp: last_seg.ctx.timestamp,
         };
         self.inner_mut().ctx = last_ctx;
         let inner = self.inner.take().expect("inner executor must exist");

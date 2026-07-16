@@ -12,8 +12,11 @@
 extern crate alloc;
 
 use alloc::{fmt::Debug, sync::Arc};
-use alloy_consensus::{constants::MAXIMUM_EXTRA_DATA_SIZE, EMPTY_OMMER_ROOT_HASH};
+use alloy_consensus::{
+    constants::MAXIMUM_EXTRA_DATA_SIZE, BlockHeader as _, BlockHeaderMut, EMPTY_OMMER_ROOT_HASH,
+};
 use alloy_eips::eip7840::BlobParams;
+use alloy_evm::eth::spec::EthExecutorSpec;
 use alloy_primitives::B256;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_consensus::{
@@ -108,10 +111,35 @@ impl<ChainSpec: EthChainSpec + EthereumHardforks> EthBeaconConsensus<ChainSpec> 
     }
 }
 
+impl<ChainSpec: EthChainSpec + EthereumHardforks + EthExecutorSpec> EthBeaconConsensus<ChainSpec> {
+    fn validate_bridge_requests_presence(
+        &self,
+        timestamp: u64,
+        bridge_requests: Option<&alloy_primitives::Bytes>,
+    ) -> Result<(), ConsensusError> {
+        if self.chain_spec.is_bridge_active_at_timestamp(timestamp) {
+            match bridge_requests {
+                Some(blob) if blob.len() >= 4 => Ok(()),
+                _ => Err(ConsensusError::BodyBridgeRequestsMissing),
+            }
+        } else if bridge_requests.is_some() {
+            Err(ConsensusError::BodyBridgeRequestsUnexpected)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl<ChainSpec, N> FullConsensus<N> for EthBeaconConsensus<ChainSpec>
 where
-    ChainSpec: Send + Sync + EthChainSpec<Header = N::BlockHeader> + EthereumHardforks + Debug,
+    ChainSpec: Send
+        + Sync
+        + EthChainSpec<Header = N::BlockHeader>
+        + EthereumHardforks
+        + EthExecutorSpec
+        + Debug,
     N: NodePrimitives,
+    N::BlockHeader: BlockHeaderMut,
 {
     fn validate_block_post_execution(
         &self,
@@ -142,17 +170,30 @@ where
 impl<B, ChainSpec> Consensus<B> for EthBeaconConsensus<ChainSpec>
 where
     B: Block,
-    ChainSpec: EthChainSpec<Header = B::Header> + EthereumHardforks + Debug + Send + Sync,
+    ChainSpec: EthChainSpec<Header = B::Header>
+        + EthereumHardforks
+        + EthExecutorSpec
+        + Debug
+        + Send
+        + Sync,
 {
     fn validate_body_against_header(
         &self,
         body: &B::Body,
         header: &SealedHeader<B::Header>,
     ) -> Result<(), ConsensusError> {
+        self.validate_bridge_requests_presence(
+            header.timestamp(),
+            reth_primitives_traits::BlockBody::bridge_requests(body),
+        )?;
         validate_body_against_header(body, header.header())
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
+        self.validate_bridge_requests_presence(
+            block.timestamp(),
+            reth_primitives_traits::BlockBody::bridge_requests(block.body()),
+        )?;
         validate_block_pre_execution(block, &self.chain_spec)
     }
 
@@ -161,6 +202,10 @@ where
         block: &SealedBlock<B>,
         transaction_root: Option<TransactionRoot>,
     ) -> Result<(), ConsensusError> {
+        self.validate_bridge_requests_presence(
+            block.timestamp(),
+            reth_primitives_traits::BlockBody::bridge_requests(block.body()),
+        )?;
         validate_block_pre_execution_with_tx_root(block, &self.chain_spec, transaction_root)
     }
 }
@@ -369,7 +414,10 @@ mod tests {
 
     #[test]
     fn test_gas_limit_below_minimum_post_fork_default_chain_id() {
-        let chain_spec = ChainSpec::default();
+        // reth-v2.4.1 migration: 0G wrote `ChainSpec::default()` against a non-generic
+        // `ChainSpec`. v2.4.1 made it `ChainSpec<H: BlockHeader = Header>`, and `H` is not
+        // inferable from this call site, so the header type is named explicitly.
+        let chain_spec = ChainSpec::<Header>::default();
         let ts = minimum_gas_limit_fork_timestamp(chain_spec.chain_id());
         let parent = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK, ts);
         let child = header_with_gas_limit_and_timestamp(MINIMUM_GAS_LIMIT_POST_FORK - 1, ts);
@@ -584,5 +632,32 @@ mod tests {
         assert!(EthBeaconConsensus::new(chain_spec)
             .validate_header(&SealedHeader::seal_slow(header,))
             .is_ok());
+    }
+
+    #[test]
+    fn bridge_requests_presence_is_fork_gated() {
+        let active =
+            Arc::new(ChainSpecBuilder::mainnet().prague_activated().with_bridge_at(1).build());
+        let inactive = Arc::new(ChainSpecBuilder::mainnet().prague_activated().build());
+        let body = alloy_primitives::Bytes::from_static(&[4, 0, 0, 0]);
+        let short = alloy_primitives::Bytes::from_static(&[4]);
+
+        let active = EthBeaconConsensus::new(active);
+        assert!(active.validate_bridge_requests_presence(1, Some(&body)).is_ok());
+        assert!(matches!(
+            active.validate_bridge_requests_presence(1, None),
+            Err(ConsensusError::BodyBridgeRequestsMissing)
+        ));
+        assert!(matches!(
+            active.validate_bridge_requests_presence(1, Some(&short)),
+            Err(ConsensusError::BodyBridgeRequestsMissing)
+        ));
+
+        let inactive = EthBeaconConsensus::new(inactive);
+        assert!(inactive.validate_bridge_requests_presence(1, None).is_ok());
+        assert!(matches!(
+            inactive.validate_bridge_requests_presence(1, Some(&body)),
+            Err(ConsensusError::BodyBridgeRequestsUnexpected)
+        ));
     }
 }

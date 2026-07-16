@@ -263,14 +263,17 @@ where
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;
 
-        let attributes_generator = move |timestamp| PayloadAttributes {
-            timestamp,
-            prev_randao: B256::ZERO,
-            suggested_fee_recipient: alloy_primitives::Address::ZERO,
-            withdrawals: Some(vec![]),
-            parent_beacon_block_root: Some(B256::ZERO),
-            slot_number: None,
-            target_gas_limit: None,
+        let attributes_generator = move |timestamp| {
+            PayloadAttributes {
+                timestamp,
+                prev_randao: B256::ZERO,
+                suggested_fee_recipient: alloy_primitives::Address::ZERO,
+                withdrawals: Some(vec![]),
+                parent_beacon_block_root: Some(B256::ZERO),
+                slot_number: None,
+                target_gas_limit: None,
+            }
+            .into()
         };
 
         crate::setup_import::setup_engine_with_chain_import(

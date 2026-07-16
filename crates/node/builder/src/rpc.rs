@@ -16,6 +16,7 @@ use crate::{
     invalid_block_hook::InvalidBlockHookExt, ConfigureEngineEvm, ConsensusEngineEvent,
     ConsensusEngineHandle,
 };
+use alloy_consensus::BlockHeaderMut;
 use alloy_rpc_types::engine::ClientVersionV1;
 use alloy_rpc_types_engine::ExecutionData;
 use jsonrpsee::RpcModule;
@@ -32,6 +33,7 @@ use reth_node_core::{
     version::{version_metadata, CLIENT_CODE},
 };
 use reth_payload_builder::{PayloadBuilderHandle, PayloadStore};
+use reth_primitives_traits::NodePrimitives;
 use reth_rpc::{
     eth::{core::EthRpcConverterFor, DevSigner, EthApiTypes, FullEthApiServer},
     AdminApi,
@@ -1454,6 +1456,7 @@ where
             <Node::Types as NodeTypes>::Payload,
             Block = BlockTy<Node::Types>,
         > + Clone,
+    <PrimitivesTy<Node::Types> as NodePrimitives>::BlockHeader: BlockHeaderMut,
 {
     type EngineValidator = BasicEngineValidator<Node::Provider, Node::Evm, EV::Validator>;
 

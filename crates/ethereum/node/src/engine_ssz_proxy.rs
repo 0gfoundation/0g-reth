@@ -420,6 +420,7 @@ where
         Ok(request) => request,
         Err(err) => return text_response(STATUS_BAD_REQUEST, err),
     };
+    let attrs = attrs.map(reth_ethereum_engine_primitives::EthPayloadAttributes::from);
 
     let response = match version {
         1 => engine_api.fork_choice_updated_v1_metered(state, attrs).await,

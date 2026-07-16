@@ -204,6 +204,10 @@ impl ExecutionPayload for BigBlockData<ExecutionData> {
         self.env_switches[0].withdrawals()
     }
 
+    fn slashed(&self) -> Option<&[Withdrawal]> {
+        self.env_switches[0].slashed()
+    }
+
     fn block_access_list(&self) -> Option<&Bytes> {
         self.merged_block_access_list.as_ref()
     }

@@ -191,6 +191,7 @@ impl<N: NodePrimitives> TestBlockBuilder<N> {
                 ommers: Vec::new(),
                 withdrawals: Some(vec![].into()),
                 slashed: None,
+                bridge_requests: None,
             },
         )
     }

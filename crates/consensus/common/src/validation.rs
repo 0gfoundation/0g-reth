@@ -440,7 +440,7 @@ pub fn validate_against_parent_gas_limit<
         })
     }
     // Check if the self gas limit is below the minimum required limit.
-    if header.gas_limit() < effective_minimum_gas_limit {
+    else if header.gas_limit() < effective_minimum_gas_limit {
         return Err(ConsensusError::GasLimitInvalidMinimum {
             child_gas_limit: header.gas_limit(),
             minimum_gas_limit: effective_minimum_gas_limit,
@@ -493,7 +493,10 @@ pub fn validate_against_parent_4844<H: BlockHeader>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{BlockBody, Header, TxEip4844};
+    // reth-v2.4.1 migration: 0G imported `{BlockBody, Header, TxEip4844}` here. v2.4.1 turned
+    // the extra-data limit into an argument of `validate_header_extra_data`, so the tests below
+    // pass `MAXIMUM_EXTRA_DATA_SIZE` explicitly and need it in scope.
+    use alloy_consensus::{constants::MAXIMUM_EXTRA_DATA_SIZE, BlockBody, Header, TxEip4844};
     use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip4895::Withdrawals};
     use alloy_primitives::{Address, Bytes, Signature, U256};
     use rand::Rng;
@@ -503,21 +506,15 @@ mod tests {
 
     #[test]
     fn genesis_extra_data_may_exceed_max_length() {
-        let header = Header {
-            number: 0,
-            extra_data: Bytes::from(vec![0u8; 117]),
-            ..Default::default()
-        };
+        let header =
+            Header { number: 0, extra_data: Bytes::from(vec![0u8; 117]), ..Default::default() };
         assert!(validate_header_extra_data(&header, MAXIMUM_EXTRA_DATA_SIZE).is_ok());
     }
 
     #[test]
     fn non_genesis_extra_data_exceeds_max_length() {
-        let header = Header {
-            number: 1,
-            extra_data: Bytes::from(vec![0u8; 117]),
-            ..Default::default()
-        };
+        let header =
+            Header { number: 1, extra_data: Bytes::from(vec![0u8; 117]), ..Default::default() };
         assert!(matches!(
             validate_header_extra_data(&header, MAXIMUM_EXTRA_DATA_SIZE).unwrap_err(),
             ConsensusError::ExtraDataExceedsMax { len: 117 }
@@ -567,7 +564,10 @@ mod tests {
             transactions: vec![transaction],
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
+            // reth-v2.4.1 migration: 0G's alloy fork adds these two fields to `BlockBody`.
+            // This upstream fixture predates them, so the literal is no longer exhaustive.
             slashed: None,
+            bridge_requests: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
@@ -585,12 +585,20 @@ mod tests {
 
     #[test]
     fn validate_header_extra_data_with_custom_limit() {
+        // reth-v2.4.1 migration: upstream built both headers with `..Default::default()`, which
+        // leaves `number: 0`. 0G exempts genesis from the extra-data limit (locked by
+        // `genesis_extra_data_may_exceed_max_length` / `non_genesis_extra_data_exceeds_max_length`
+        // above), so at height 0 the limit is never consulted: the `unwrap_err()` below panicked
+        // on an `Ok`, and the 32-byte `is_ok()` assertion passed vacuously. This test is about the
+        // `max_size` argument, not about genesis, so both headers are moved off height 0.
         // Test with default 32 bytes - should pass
-        let header_32 = Header { extra_data: Bytes::from(vec![0; 32]), ..Default::default() };
+        let header_32 =
+            Header { number: 1, extra_data: Bytes::from(vec![0; 32]), ..Default::default() };
         assert!(validate_header_extra_data(&header_32, 32).is_ok());
 
         // Test exceeding default - should fail
-        let header_33 = Header { extra_data: Bytes::from(vec![0; 33]), ..Default::default() };
+        let header_33 =
+            Header { number: 1, extra_data: Bytes::from(vec![0; 33]), ..Default::default() };
         assert!(matches!(
             validate_header_extra_data(&header_33, 32).unwrap_err(),
             ConsensusError::ExtraDataExceedsMax { len } if len == 33
@@ -619,6 +627,10 @@ mod tests {
             transactions: vec![transaction],
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
+            // reth-v2.4.1 migration: 0G's alloy fork adds these two fields to `BlockBody`.
+            // This upstream fixture predates them, so the literal is no longer exhaustive.
+            slashed: None,
+            bridge_requests: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
@@ -649,6 +661,10 @@ mod tests {
             transactions: vec![transaction],
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
+            // reth-v2.4.1 migration: 0G's alloy fork adds these two fields to `BlockBody`.
+            // This upstream fixture predates them, so the literal is no longer exhaustive.
+            slashed: None,
+            bridge_requests: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });

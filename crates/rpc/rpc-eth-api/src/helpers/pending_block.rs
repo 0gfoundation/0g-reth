@@ -502,6 +502,7 @@ impl<H: BlockHeader> BuildPendingEnv<H> for NextBlockEnvAttributes {
             withdrawals: parent.withdrawals_root().map(|_| Default::default()),
             extra_data: parent.extra_data().clone(),
             slot_number: parent.slot_number().map(|slot| slot.saturating_add(1)),
+            bridge_request: None,
         };
 
         if attributes.parent_beacon_block_root.is_some() &&
@@ -566,5 +567,31 @@ mod tests {
         let attrs = NextBlockEnvAttributes::build_pending_env(&sealed, None);
 
         assert_eq!(attrs.slot_number, Some(8));
+    }
+
+    // reth-v2.4.1 migration: 0G carried two separate `#[cfg(test)] mod tests` blocks in this
+    // file (the replay landed one from each side of the fork). Two modules with the same name
+    // in one file do not compile, so they are merged here; the test below is unchanged apart
+    // from the `build_pending_env` argument noted on it.
+
+    /// `BuildPendingEnv` is used by `eth_call` / `eth_estimateGas` / pending-block construction.
+    /// It must NOT populate `bridge_request`: pending blocks are local-mempool simulations and
+    /// must not fire the bridge system call (which would alter state from an unsealed CL input
+    /// the simulator has no business deciding on). Locking this wiring invariant catches a
+    /// future refactor that accidentally inherits a bridge blob from somewhere (parent header,
+    /// a thread-local, etc.).
+    #[test]
+    fn build_pending_env_sets_no_bridge_request() {
+        let header = Header::default();
+        let parent = SealedHeader::seal_slow(header);
+        // reth-v2.4.1 migration: 0G called `build_pending_env(&parent)`. v2.4.1 added a
+        // `block_overrides: Option<&BlockOverrides>` parameter; `None` is the no-override case
+        // this test already exercised.
+        let attrs =
+            <NextBlockEnvAttributes as BuildPendingEnv<Header>>::build_pending_env(&parent, None);
+        assert!(
+            attrs.bridge_request.is_none(),
+            "pending-block / eth_call path must NOT carry bridge_request"
+        );
     }
 }

@@ -155,6 +155,7 @@ where
                     withdrawals: withdrawals.map(Into::into),
                     extra_data: request.extra_data.unwrap_or_default(),
                     slot_number: request.payload_attributes.slot_number,
+                    bridge_request: None,
                 };
 
                 let mut builder = evm_config

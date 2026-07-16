@@ -387,6 +387,8 @@ mod tests {
                 transactions: vec![],
                 ommers: vec![],
                 withdrawals: Some(vec![].into()),
+                slashed: None,
+                bridge_requests: None,
             },
         };
         block.seal_slow()

@@ -330,6 +330,10 @@ async fn run_pipeline_forward_and_unwind(
                     transactions: transactions.clone(),
                     ommers: Vec::new(),
                     withdrawals: None,
+                    // reth-v2.4.1 migration: 0G's alloy fork adds these two `BlockBody`
+                    // fields; this upstream fixture predates them.
+                    slashed: None,
+                    bridge_requests: None,
                 },
             ),
             vec![signer_address, signer_address], // Both txs from same sender
@@ -378,7 +382,15 @@ async fn run_pipeline_forward_and_unwind(
 
         let block: SealedBlock<Block> = SealedBlock::seal_parts(
             header.clone(),
-            BlockBody { transactions, ommers: Vec::new(), withdrawals: None },
+            // reth-v2.4.1 migration: same 0G fork fields; upstream's literal was
+            // `BlockBody { transactions, ommers: Vec::new(), withdrawals: None }`.
+            BlockBody {
+                transactions,
+                ommers: Vec::new(),
+                withdrawals: None,
+                slashed: None,
+                bridge_requests: None,
+            },
         );
 
         // Write the plain state to database so subsequent blocks build on it

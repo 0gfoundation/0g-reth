@@ -49,7 +49,11 @@ async fn can_run_dev_node_custom_attributes() -> eyre::Result<()> {
         .with_add_ons(EthereumAddOns::default())
         .launch_with_debug_capabilities()
         .map_debug_payload_attributes(move |mut attributes| {
-            attributes.suggested_fee_recipient = fee_recipient;
+            // reth-v2.4.1 migration: upstream assigned `attributes.suggested_fee_recipient`
+            // directly. 0G's `EthPayloadAttributes` wraps the standard attributes as `inner`
+            // (plus `bridge_requests`) and implements only `Deref`, not `DerefMut`, so a
+            // mutable field access must go through `inner`.
+            attributes.inner.suggested_fee_recipient = fee_recipient;
             attributes
         })
         .await?;

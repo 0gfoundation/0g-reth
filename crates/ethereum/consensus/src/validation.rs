@@ -1,7 +1,6 @@
 use alloc::vec::Vec;
 use alloy_consensus::{proofs::calculate_receipt_root, BlockHeader, BlockHeaderMut, TxReceipt};
-use alloy_eips::Encodable2718;
-use alloy_primitives::{Bloom, Bytes, B256};
+use alloy_primitives::{Bloom, B256};
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
@@ -85,7 +84,8 @@ where
     // Check if gas used matches the value set in header.
     if block.header().gas_used() != result.gas_used {
         // Update header with actual gas used from execution
-        // This is expected because proposal uses gas_limit while validation uses actual execution result
+        // This is expected because proposal uses gas_limit while validation uses actual execution
+        // result
         header.set_gas_used(result.gas_used);
         tracing::info!(
             target: "consensus::validation",
@@ -106,11 +106,11 @@ where
         let (receipts_root, logs_bloom) = if let Some(root_bloom) = receipt_root_bloom {
             root_bloom
         } else {
-            let receipts = result.receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
+            let receipts =
+                result.receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
             let receipts_root = calculate_receipt_root(&receipts);
-            let logs_bloom = receipts.iter().fold(Bloom::ZERO, |bloom, receipt| {
-                bloom | receipt.bloom_ref()
-            });
+            let logs_bloom =
+                receipts.iter().fold(Bloom::ZERO, |bloom, receipt| bloom | receipt.bloom_ref());
             (receipts_root, logs_bloom)
         };
 

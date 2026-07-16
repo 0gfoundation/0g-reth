@@ -11,36 +11,47 @@ use alloy_rpc_types_eth::TransactionRequest;
 use alloy_signer::SignerSync;
 use rand::{seq::IndexedRandom, Rng};
 use reth_e2e_test_utils::{wallet::Wallet, NodeHelperType, TmpDB};
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_ethereum_primitives::TxType;
 use reth_node_api::NodeTypesWithDBAdapter;
 use reth_node_ethereum::EthereumNode;
 use reth_provider::FullProvider;
 
 /// Helper function to create a new eth payload attributes
-pub(crate) const fn eth_payload_attributes(timestamp: u64) -> PayloadAttributes {
-    PayloadAttributes {
-        timestamp,
-        prev_randao: B256::ZERO,
-        suggested_fee_recipient: Address::ZERO,
-        withdrawals: Some(vec![]),
-        parent_beacon_block_root: Some(B256::ZERO),
-        slot_number: None,
-        target_gas_limit: None,
-    }
+// reth-v2.4.1 migration: these three helpers returned alloy's `PayloadAttributes` directly.
+// The e2e node API now takes 0G's `EthPayloadAttributes`, which wraps those attributes as
+// `inner` alongside `bridge_requests`. `None` is passed because local e2e payloads carry no
+// consensus-layer bridge blob.
+pub(crate) const fn eth_payload_attributes(timestamp: u64) -> EthPayloadAttributes {
+    EthPayloadAttributes::new(
+        PayloadAttributes {
+            timestamp,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Address::ZERO,
+            withdrawals: Some(vec![]),
+            parent_beacon_block_root: Some(B256::ZERO),
+            slot_number: None,
+            target_gas_limit: None,
+        },
+        None,
+    )
 }
 
 /// Helper function to create pre-Cancun (Shanghai) payload attributes.
 /// No `parent_beacon_block_root` field.
-pub(crate) const fn eth_payload_attributes_shanghai(timestamp: u64) -> PayloadAttributes {
-    PayloadAttributes {
-        timestamp,
-        prev_randao: B256::ZERO,
-        suggested_fee_recipient: Address::ZERO,
-        withdrawals: Some(vec![]),
-        parent_beacon_block_root: None,
-        slot_number: None,
-        target_gas_limit: None,
-    }
+pub(crate) const fn eth_payload_attributes_shanghai(timestamp: u64) -> EthPayloadAttributes {
+    EthPayloadAttributes::new(
+        PayloadAttributes {
+            timestamp,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Address::ZERO,
+            withdrawals: Some(vec![]),
+            parent_beacon_block_root: None,
+            slot_number: None,
+            target_gas_limit: None,
+        },
+        None,
+    )
 }
 
 /// Helper function to create Amsterdam payload attributes.
@@ -49,16 +60,19 @@ pub(crate) const fn eth_payload_attributes_shanghai(timestamp: u64) -> PayloadAt
 /// `slot_number` in the attributes once Amsterdam is active. Tests use the timestamp as a
 /// deterministic dummy slot because the exact beacon slot is irrelevant for these local e2e
 /// payloads.
-pub(crate) const fn eth_payload_attributes_amsterdam(timestamp: u64) -> PayloadAttributes {
-    PayloadAttributes {
-        timestamp,
-        prev_randao: B256::ZERO,
-        suggested_fee_recipient: Address::ZERO,
-        withdrawals: Some(vec![]),
-        parent_beacon_block_root: Some(B256::ZERO),
-        slot_number: Some(timestamp),
-        target_gas_limit: None,
-    }
+pub(crate) const fn eth_payload_attributes_amsterdam(timestamp: u64) -> EthPayloadAttributes {
+    EthPayloadAttributes::new(
+        PayloadAttributes {
+            timestamp,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Address::ZERO,
+            withdrawals: Some(vec![]),
+            parent_beacon_block_root: Some(B256::ZERO),
+            slot_number: Some(timestamp),
+            target_gas_limit: None,
+        },
+        None,
+    )
 }
 
 /// Advances node by producing blocks with random transactions.

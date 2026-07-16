@@ -414,13 +414,24 @@ mod tests {
             while let Some(message) = from_engine.recv().await {
                 match message {
                     BeaconEngineMessage::NewPayload { payload: _, tx } => {
-                        tx.send(Ok(PayloadStatus::new(responses.new_payload.clone(), None)))
-                            .unwrap();
+                        // reth-v2.4.1 migration: 0G adds `execution_requests` as a third
+                        // `PayloadStatus::new` argument so bridge system-call requests survive
+                        // the status round-trip. Upstream called it with two arguments; this
+                        // stub has no requests to report.
+                        tx.send(Ok(PayloadStatus::new(
+                            responses.new_payload.clone(),
+                            None,
+                            Vec::new(),
+                        )))
+                        .unwrap();
                     }
                     BeaconEngineMessage::ForkchoiceUpdated { state: _, payload_attrs: _, tx } => {
+                        // reth-v2.4.1 migration: same third `PayloadStatus::new` argument as
+                        // above.
                         tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::new(
                             responses.fcu.clone(),
                             None,
+                            Vec::new(),
                         ))))
                         .unwrap();
                     }

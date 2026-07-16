@@ -222,12 +222,17 @@ fn run_case(case: &BlockchainTest) -> Result<(), Error> {
         .map_err(|err| Error::block_failed(0, err))?;
 
     // Decode blocks
-    let blocks = decode_blocks(&case.blocks)?;
+    // reth-v2.4.1 migration: 0G had `let blocks` / `blocks.iter()` below, which cannot compile
+    // against 0G's own `validate_block_post_execution(block: &mut RecoveredBlock<B>, ..)` —
+    // that signature takes `&mut` because 0G writes the corrected `gas_used` back into the
+    // header. The mismatch stayed hidden because 0G's `default-members = ["bin/reth"]` keeps
+    // `cargo check` from ever building `testing/ef-tests`; a `--workspace` build surfaces it.
+    let mut blocks = decode_blocks(&case.blocks)?;
 
     let executor_provider = EthEvmConfig::ethereum(chain_spec.clone());
     let mut parent = genesis_block;
 
-    for (block_index, block) in blocks.iter().enumerate() {
+    for (block_index, block) in blocks.iter_mut().enumerate() {
         // Note: same as the comment on `decode_blocks` as to why we cannot use block.number
         let block_number = (block_index + 1) as u64;
 

@@ -22,7 +22,8 @@ use crate::{
         blocks::{HeaderHash, StoredBlockOmmers},
         storage_sharded_key::StorageShardedKey,
         AccountBeforeTx, ClientVersion, CompactU256, IntegerList, ShardedKey,
-        StoredBlockBodyIndices, StoredBlockWithdrawals, StoredBlockSlashed,
+        StoredBlockBodyIndices, StoredBlockBridgeRequests, StoredBlockSlashed,
+        StoredBlockWithdrawals,
     },
     table::{Decode, DupSort, Encode, Table, TableInfo},
 };
@@ -355,6 +356,13 @@ tables! {
     table BlockSlashed {
         type Key = BlockNumber;
         type Value = StoredBlockSlashed;
+    }
+
+    /// Stores the 0G bridge-requests SSZ blob for the block (verbatim 0xf0 requests-entry
+    /// data). One row per post-Bridge-fork block; no rows before the fork.
+    table BlockBridgeRequests {
+        type Key = BlockNumber;
+        type Value = StoredBlockBridgeRequests;
     }
 
     /// Canonical only Stores the transaction body for canonical transactions.

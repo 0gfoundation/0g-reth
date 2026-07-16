@@ -247,7 +247,11 @@ impl From<PayloadStatus> for LegacyPayloadStatus {
             },
             status => status,
         };
-        Self { status, latest_valid_hash: value.latest_valid_hash.into() }
+        Self {
+            status,
+            latest_valid_hash: value.latest_valid_hash.into(),
+            execution_requests: vec![],
+        }
     }
 }
 
@@ -968,7 +972,14 @@ mod tests {
     }
 
     fn payload_v3() -> ExecutionPayloadV3 {
-        ExecutionPayloadV3 { payload_inner: payload_v2(), blob_gas_used: 17, excess_blob_gas: 18 }
+        // reth-v2.4.1 migration: 0G's alloy fork adds `slashed` to `ExecutionPayloadV3`.
+        // Upstream's fixture was a three-field literal.
+        ExecutionPayloadV3 {
+            payload_inner: payload_v2(),
+            blob_gas_used: 17,
+            excess_blob_gas: 18,
+            slashed: vec![],
+        }
     }
 
     fn payload_v4() -> ExecutionPayloadV4 {
@@ -1278,9 +1289,13 @@ mod tests {
 
     #[test]
     fn payload_status_legacy_conversion_rejects_oversized_error() {
+        // reth-v2.4.1 migration: 0G adds `execution_requests` to `LegacyPayloadStatus` so the
+        // bridge system call's requests survive the legacy conversion. Upstream's fixture set
+        // only `status` and `latest_valid_hash`.
         assert!(PayloadStatus::try_from(LegacyPayloadStatus {
             status: PayloadStatusEnum::Invalid { validation_error: "x".repeat(1025) },
             latest_valid_hash: None,
+            execution_requests: vec![],
         })
         .is_err());
     }

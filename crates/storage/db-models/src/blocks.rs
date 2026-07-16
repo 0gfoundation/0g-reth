@@ -1,5 +1,5 @@
 use alloy_eips::eip4895::Withdrawals;
-use alloy_primitives::TxNumber;
+use alloy_primitives::{Bytes, TxNumber};
 use core::ops::Range;
 
 /// Total number of transactions.
@@ -101,6 +101,20 @@ pub struct StoredBlockSlashed {
 
 #[cfg(any(test, feature = "reth-codec"))]
 reth_codecs::impl_compression_for_compact!(StoredBlockSlashed);
+
+/// Verbatim SSZ bridge request body persisted for deterministic replay.
+#[derive(Debug, Default, Eq, PartialEq, Clone)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StoredBlockBridgeRequests {
+    /// Raw SSZ bytes without the EIP-7685 request type byte.
+    pub bridge_requests: Bytes,
+}
+
+#[cfg(any(test, feature = "reth-codec"))]
+reth_codecs::impl_compression_for_compact!(StoredBlockBridgeRequests);
 
 /// A storage representation of block withdrawals that is static file friendly. An inner `None`
 /// represents a pre-merge block.

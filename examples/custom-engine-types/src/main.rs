@@ -354,7 +354,11 @@ where
             config: PayloadConfig {
                 parent_header,
                 parent_block_info,
-                attributes: attributes.inner,
+                // reth-v2.4.1 migration: upstream passed `attributes.inner` straight through.
+                // This example's `inner` is alloy's `PayloadAttributes`, while the delegated
+                // `EthereumPayloadBuilder` now takes 0G's `EthPayloadAttributes` wrapper, so
+                // the `From<PayloadAttributes>` impl performs the widening.
+                attributes: attributes.inner.into(),
                 payload_id,
             },
             cancel,
@@ -370,7 +374,8 @@ where
         self.inner.build_empty_payload(PayloadConfig {
             parent_header,
             parent_block_info,
-            attributes: attributes.inner,
+            // reth-v2.4.1 migration: same `EthPayloadAttributes` widening as in `try_build`.
+            attributes: attributes.inner.into(),
             payload_id,
         })
     }

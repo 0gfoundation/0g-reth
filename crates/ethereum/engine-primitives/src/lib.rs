@@ -13,7 +13,7 @@ extern crate alloc;
 
 mod payload;
 use alloy_primitives::Bytes;
-pub use payload::{BlobSidecars, EthBuiltPayload};
+pub use payload::{payload_id, BlobSidecars, EthBuiltPayload, EthPayloadAttributes};
 
 mod error;
 pub use error::*;
@@ -22,7 +22,6 @@ use alloy_rpc_types_engine::{ExecutionData, ExecutionPayload};
 pub use alloy_rpc_types_engine::{
     ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4,
     ExecutionPayloadEnvelopeV5, ExecutionPayloadEnvelopeV6, ExecutionPayloadV1,
-    PayloadAttributes as EthPayloadAttributes,
 };
 use reth_engine_primitives::EngineTypes;
 use reth_payload_primitives::{BuiltPayload, PayloadTypes};

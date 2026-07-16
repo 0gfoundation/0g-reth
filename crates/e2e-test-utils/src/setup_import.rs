@@ -1,11 +1,11 @@
 //! Setup utilities for importing RLP chain data before starting nodes.
 
 use crate::{node::NodeTestContext, NodeHelperType, Wallet};
-use alloy_rpc_types_engine::PayloadAttributes;
 use reth_chainspec::ChainSpec;
 use reth_cli_commands::import_core::{import_blocks_from_file, ImportConfig};
 use reth_config::Config;
 use reth_db::DatabaseEnv;
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_node_api::{NodeTypesWithDBAdapter, TreeConfig};
 use reth_node_builder::{EngineNodeLauncher, Node, NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
@@ -60,7 +60,7 @@ pub async fn setup_engine_with_chain_import(
     is_dev: bool,
     tree_config: TreeConfig,
     rlp_path: &Path,
-    attributes_generator: impl Fn(u64) -> PayloadAttributes + Send + Sync + Copy + 'static,
+    attributes_generator: impl Fn(u64) -> EthPayloadAttributes + Send + Sync + Copy + 'static,
 ) -> eyre::Result<ChainImportResult> {
     let runtime = reth_tasks::Runtime::test();
 
@@ -565,7 +565,7 @@ mod tests {
             false,
             TreeConfig::default(),
             &rlp_path,
-            |_| PayloadAttributes::default(),
+            |_| PayloadAttributes::default().into(),
         )
         .await
         .expect("Failed to setup nodes with chain import");

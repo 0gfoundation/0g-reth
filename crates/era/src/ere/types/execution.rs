@@ -639,8 +639,15 @@ mod tests {
 
     #[test]
     fn test_block_body_conversion() {
-        let block_body: BlockBody<Bytes> =
-            BlockBody { transactions: vec![], ommers: vec![], withdrawals: None };
+        // reth-v2.4.1 migration: 0G's alloy fork adds `slashed` / `bridge_requests` to
+        // `BlockBody`. Upstream wrote this fixture as a one-line three-field literal.
+        let block_body: BlockBody<Bytes> = BlockBody {
+            transactions: vec![],
+            ommers: vec![],
+            withdrawals: None,
+            slashed: None,
+            bridge_requests: None,
+        };
 
         let compressed_body = CompressedBody::from_body(&block_body).unwrap();
 
@@ -708,7 +715,15 @@ mod tests {
 
         let withdrawals = Some(Withdrawals(vec![]));
 
-        let block_body = BlockBody { transactions, ommers: vec![], withdrawals };
+        // reth-v2.4.1 migration: same 0G fork fields as above; upstream's literal was
+        // `BlockBody { transactions, ommers: vec![], withdrawals }`.
+        let block_body = BlockBody {
+            transactions,
+            ommers: vec![],
+            withdrawals,
+            slashed: None,
+            bridge_requests: None,
+        };
 
         let block = Block::new(header, block_body);
 

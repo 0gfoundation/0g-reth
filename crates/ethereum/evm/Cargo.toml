@@ -20,6 +20,7 @@ reth-ethereum-primitives.workspace = true
 revm.workspace = true
 reth-evm.workspace = true
 reth-storage-errors.workspace = true
+reth-0g-bridge.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
@@ -31,12 +32,21 @@ alloy-rpc-types-engine.workspace = true
 metrics = { workspace = true, optional = true }
 reth-metrics = { workspace = true, optional = true }
 revmc = { workspace = true, features = ["alloy-evm"], optional = true }
+# Misc
+# reth-v2.4.1 migration: 0G also declared `parking_lot` and `derive_more` here, inherited from
+# the fork point where `src/test_utils.rs` used `parking_lot::Mutex` / `derive_more::Debug`.
+# v2.4.1 rewrote that file without either crate and dropped both declarations, and no 0G code
+# ever referenced them. Keeping them left orphaned optional deps that no feature enables, which
+# `zepter run check` rejects (`std` must propagate to `derive_more`).
+tracing.workspace = true
 
 [dev-dependencies]
 reth-testing-utils.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
 secp256k1.workspace = true
 alloy-genesis.workspace = true
+alloy-sol-types.workspace = true
+ethereum_ssz.workspace = true
 
 [features]
 default = ["std"]
@@ -56,6 +66,9 @@ std = [
     "reth-ethereum-primitives/std",
     "alloy-rpc-types-engine/std",
     "reth-storage-errors/std",
+    "reth-0g-bridge/std",
+    "alloy-sol-types/std",
+    "tracing/std",
 ]
 jit = [
     "std",

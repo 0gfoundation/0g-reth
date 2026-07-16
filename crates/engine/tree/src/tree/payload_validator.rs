@@ -145,8 +145,8 @@ use reth_payload_primitives::{
     PayloadTypes,
 };
 use reth_primitives_traits::{
-    AlloyBlockHeader, BlockBody, BlockTy, FastInstant as Instant, NodePrimitives,
-    RecoveredBlock, SealedBlock, SealedHeader, SignerRecoverable,
+    AlloyBlockHeader, BlockBody, BlockTy, FastInstant as Instant, NodePrimitives, RecoveredBlock,
+    SealedBlock, SealedHeader, SignerRecoverable,
 };
 use reth_provider::{
     providers::{OverlayBuilder, OverlayStateProviderFactory},
@@ -302,6 +302,7 @@ where
 impl<N, P, Evm, V> BasicEngineValidator<P, Evm, V>
 where
     N: NodePrimitives,
+    N::BlockHeader: BlockHeaderMut,
     P: DatabaseProviderFactory<
             Provider: BlockReader
                           + StageCheckpointReader
@@ -1730,6 +1731,7 @@ where
         + Sync
         + 'static,
     N: NodePrimitives,
+    N::BlockHeader: BlockHeaderMut,
     V: PayloadValidator<Types, Block = N::Block> + Clone,
     Evm: ConfigureEngineEvm<Types::ExecutionData, Primitives = N> + 'static,
     Types: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,

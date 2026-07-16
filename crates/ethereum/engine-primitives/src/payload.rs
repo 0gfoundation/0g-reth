@@ -3,22 +3,95 @@
 use alloc::{sync::Arc, vec::Vec};
 use alloy_eips::{
     eip4844::BlobTransactionSidecar,
+    eip4895::Withdrawal,
     eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
     eip7685::Requests,
 };
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{Bytes, B256, U256};
 use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, CancunPayloadFields, ExecutionData, ExecutionPayload,
     ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4,
     ExecutionPayloadEnvelopeV5, ExecutionPayloadEnvelopeV6, ExecutionPayloadFieldV2,
     ExecutionPayloadSidecar, ExecutionPayloadV1, ExecutionPayloadV3, ExecutionPayloadV4,
-    PraguePayloadFields,
+    PayloadAttributes as InnerPayloadAttributes, PayloadId, PraguePayloadFields,
 };
 use reth_ethereum_primitives::EthPrimitives;
-use reth_payload_primitives::BuiltPayload;
+use reth_payload_primitives::{payload_id as upstream_payload_id, BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::{NodePrimitives, RecoveredBlock, SealedBlock};
 
 use crate::BuiltPayloadConversionError;
+
+/// Ethereum payload attributes extended with the raw 0G Bridge SSZ context.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EthPayloadAttributes {
+    /// Standard payload attributes, flattened to preserve the Engine API JSON shape.
+    #[serde(flatten)]
+    pub inner: InnerPayloadAttributes,
+    /// Raw SSZ `BridgeRequests` body. `None` is distinct from an encoded empty list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge_requests: Option<Bytes>,
+}
+
+impl EthPayloadAttributes {
+    /// Creates extended attributes from standard attributes and optional bridge context.
+    pub const fn new(inner: InnerPayloadAttributes, bridge_requests: Option<Bytes>) -> Self {
+        Self { inner, bridge_requests }
+    }
+}
+
+impl From<InnerPayloadAttributes> for EthPayloadAttributes {
+    fn from(inner: InnerPayloadAttributes) -> Self {
+        Self::new(inner, None)
+    }
+}
+
+impl core::ops::Deref for EthPayloadAttributes {
+    type Target = InnerPayloadAttributes;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl PayloadAttributes for EthPayloadAttributes {
+    fn payload_id(&self, parent_hash: &B256) -> PayloadId {
+        payload_id(parent_hash, self)
+    }
+
+    fn timestamp(&self) -> u64 {
+        self.inner.timestamp
+    }
+
+    fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
+        self.inner.withdrawals.as_ref()
+    }
+
+    fn parent_beacon_block_root(&self) -> Option<B256> {
+        self.inner.parent_beacon_block_root
+    }
+
+    fn slot_number(&self) -> Option<u64> {
+        self.inner.slot_number
+    }
+
+    fn target_gas_limit(&self) -> Option<u64> {
+        self.inner.target_gas_limit
+    }
+}
+
+/// Computes the upstream payload id and extends it only when bridge bytes are present.
+pub fn payload_id(parent: &B256, attributes: &EthPayloadAttributes) -> PayloadId {
+    let base = upstream_payload_id(parent, &attributes.inner);
+    let Some(bridge_requests) = &attributes.bridge_requests else { return base };
+
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(base.0.as_slice());
+    hasher.update(bridge_requests);
+    #[allow(deprecated)]
+    PayloadId::new(hasher.finalize().as_slice()[..8].try_into().expect("sufficient length"))
+}
 
 /// Contains the built payload.
 ///
@@ -421,7 +494,7 @@ impl From<alloc::vec::IntoIter<BlobTransactionSidecarEip7594>> for BlobSidecars 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::B256;
+    use alloy_primitives::Address;
     use reth_primitives_traits::{Block as _, RecoveredBlock};
 
     #[test]
@@ -474,5 +547,54 @@ mod tests {
         fn assert_try_from<T: TryFrom<EthBuiltPayload, Error = core::convert::Infallible>>() {}
 
         assert_try_from::<ExecutionData>();
+    }
+
+    fn standard_attributes() -> InnerPayloadAttributes {
+        InnerPayloadAttributes {
+            timestamp: 1,
+            prev_randao: B256::with_last_byte(1),
+            suggested_fee_recipient: Address::with_last_byte(2),
+            withdrawals: None,
+            parent_beacon_block_root: None,
+            slot_number: Some(3),
+            target_gas_limit: Some(4),
+        }
+    }
+
+    #[test]
+    fn absent_bridge_preserves_upstream_payload_id() {
+        let parent = B256::with_last_byte(5);
+        let inner = standard_attributes();
+        let attributes = EthPayloadAttributes::new(inner.clone(), None);
+        assert_eq!(payload_id(&parent, &attributes), upstream_payload_id(&parent, &inner));
+    }
+
+    #[test]
+    fn payload_id_changes_with_bridge_bytes() {
+        let parent = B256::with_last_byte(5);
+        let inner = standard_attributes();
+        let absent = payload_id(&parent, &EthPayloadAttributes::new(inner.clone(), None));
+        let empty = payload_id(
+            &parent,
+            &EthPayloadAttributes::new(inner.clone(), Some(Bytes::from_static(&[4, 0, 0, 0]))),
+        );
+        let non_empty = payload_id(
+            &parent,
+            &EthPayloadAttributes::new(inner, Some(Bytes::from_static(&[4, 0, 0, 1]))),
+        );
+        assert_ne!(absent, empty);
+        assert_ne!(empty, non_empty);
+    }
+
+    #[test]
+    fn bridge_attributes_preserve_amsterdam_json_fields() {
+        let attributes = EthPayloadAttributes::new(
+            standard_attributes(),
+            Some(Bytes::from_static(&[4, 0, 0, 0])),
+        );
+        let json = serde_json::to_string(&attributes).unwrap();
+        assert!(json.contains("bridgeRequests"));
+        assert!(json.contains("slotNumber"));
+        assert!(json.contains("targetGasLimit"));
     }
 }

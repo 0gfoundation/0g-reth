@@ -1054,6 +1054,8 @@ mod tests {
                     transactions: vec![],
                     ommers: vec![],
                     withdrawals: Some(Default::default()),
+                    slashed: None,
+                    bridge_requests: None,
                 }]
                 .into(),
             }));

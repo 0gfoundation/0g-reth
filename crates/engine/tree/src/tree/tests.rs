@@ -88,7 +88,7 @@ impl EngineApiValidator<EthEngineTypes> for MockEngineValidator {
         _payload_or_attrs: reth_payload_primitives::PayloadOrAttributes<
             '_,
             alloy_rpc_types_engine::ExecutionData,
-            alloy_rpc_types_engine::PayloadAttributes,
+            EthPayloadAttributes,
         >,
     ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
         // Mock implementation - always valid
@@ -98,7 +98,7 @@ impl EngineApiValidator<EthEngineTypes> for MockEngineValidator {
     fn ensure_well_formed_attributes(
         &self,
         _version: reth_payload_primitives::EngineApiMessageVersion,
-        _attributes: &alloy_rpc_types_engine::PayloadAttributes,
+        _attributes: &EthPayloadAttributes,
     ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
         // Mock implementation - always valid
         Ok(())
@@ -318,6 +318,7 @@ impl TestHarness {
             parent_to_child,
             engine_kind: EngineApiKind::Ethereum,
             state_trie_overlays,
+            payload_to_executed_hash: Default::default(),
         };
 
         let last_executed_block = blocks.last().unwrap().clone();
@@ -693,15 +694,18 @@ fn process_payload_attributes_shares_sparse_trie_during_validation_fallback() {
     test_harness.tree.state.set_pending_sparse_trie_prune(true);
 
     let updated = test_harness.tree.process_payload_attributes(
-        EthPayloadAttributes {
-            timestamp: head.timestamp() + 1,
-            prev_randao: B256::ZERO,
-            suggested_fee_recipient: Default::default(),
-            withdrawals: None,
-            parent_beacon_block_root: None,
-            slot_number: None,
-            target_gas_limit: None,
-        },
+        EthPayloadAttributes::new(
+            alloy_rpc_types_engine::PayloadAttributes {
+                timestamp: head.timestamp() + 1,
+                prev_randao: B256::ZERO,
+                suggested_fee_recipient: Default::default(),
+                withdrawals: None,
+                parent_beacon_block_root: None,
+                slot_number: None,
+                target_gas_limit: None,
+            },
+            None,
+        ),
         &head,
         state,
     );
@@ -846,7 +850,7 @@ fn test_validated_payload_bal_is_inserted_into_store() {
 
     assert_eq!(
         outcome,
-        InsertPayloadOk::Inserted(BlockStatus::Valid { head: child_num_hash })
+        InsertPayloadOk::Inserted(BlockStatus::Valid { head: child_num_hash, requests: vec![] })
     );
     assert_eq!(bal_store.get_by_hash(child_num_hash.hash).unwrap(), Some(raw_bal));
 }

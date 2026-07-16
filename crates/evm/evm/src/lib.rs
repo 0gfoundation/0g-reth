@@ -118,6 +118,7 @@ pub use alloy_evm::{
 ///     withdrawals: Some(withdrawals),
 ///     parent_beacon_block_root: Some(beacon_root),
 ///     slot_number: None,
+///     bridge_request: None,
 /// };
 ///
 /// // Build a new block on top of parent
@@ -553,4 +554,6 @@ pub struct NextBlockEnvAttributes {
     pub extra_data: Bytes,
     /// Optional slot number for post-Amsterdam payloads.
     pub slot_number: Option<u64>,
+    /// Raw SSZ Bridge request body supplied by the consensus layer.
+    pub bridge_request: Option<Bytes>,
 }

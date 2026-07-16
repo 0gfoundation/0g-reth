@@ -35,6 +35,7 @@ reth-engine-primitives.workspace = true
 reth-tasks.workspace = true
 reth-node-ethereum.workspace = true
 reth-ethereum-primitives.workspace = true
+reth-ethereum-engine-primitives.workspace = true
 reth-cli-commands.workspace = true
 reth-config.workspace = true
 reth-consensus.workspace = true

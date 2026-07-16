@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::{eip1898::BlockWithParent, merge::EPOCH_SLOTS, BlockNumHash, NumHash};
-use alloy_primitives::{map::B256Map, B256};
+use alloy_primitives::{map::B256Map, Bytes, B256};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
@@ -25,9 +25,9 @@ use reth_errors::{ConsensusError, ProviderResult};
 use reth_evm::ConfigureEvm;
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle};
 use reth_payload_primitives::{BuiltPayload, NewPayloadError, PayloadAttributes, PayloadTypes};
-use reth_primitives_traits::transaction::TxHashRef;
 use reth_primitives_traits::{
-    BlockBody, FastInstant as Instant, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
+    transaction::TxHashRef, BlockBody, FastInstant as Instant, NodePrimitives, RecoveredBlock,
+    SealedBlock, SealedHeader,
 };
 use reth_provider::{
     BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockReader, ChangeSetReader,
@@ -519,6 +519,7 @@ where
         TreeOutcome::new(OnForkChoiceUpdated::valid(PayloadStatus::new(
             PayloadStatusEnum::Valid,
             Some(state.head_block_hash),
+            vec![],
         )))
     }
 
@@ -831,27 +832,27 @@ where
 
         match self.insert_payload(payload) {
             Ok(status) => {
-                let (status, already_seen) = match status {
-                    InsertPayloadOk::Inserted(BlockStatus::Valid { head }) => {
+                let (status, already_seen, execution_requests) = match status {
+                    InsertPayloadOk::Inserted(BlockStatus::Valid { head, requests }) => {
                         latest_valid_hash = Some(head.hash);
                         self.try_connect_buffered_blocks(num_hash)?;
-                        (PayloadStatusEnum::Valid, false)
+                        (PayloadStatusEnum::Valid, false, requests)
                     }
-                    InsertPayloadOk::AlreadySeen(BlockStatus::Valid { head }) => {
+                    InsertPayloadOk::AlreadySeen(BlockStatus::Valid { head, requests }) => {
                         latest_valid_hash = Some(head.hash);
-                        (PayloadStatusEnum::Valid, true)
+                        (PayloadStatusEnum::Valid, true, requests)
                     }
                     InsertPayloadOk::Inserted(BlockStatus::Disconnected { .. }) => {
-                        (PayloadStatusEnum::Syncing, false)
+                        (PayloadStatusEnum::Syncing, false, vec![])
                     }
                     InsertPayloadOk::AlreadySeen(BlockStatus::Disconnected { .. }) => {
                         // not known to be invalid, but we don't know anything else
-                        (PayloadStatusEnum::Syncing, true)
+                        (PayloadStatusEnum::Syncing, true, vec![])
                     }
                 };
 
                 Ok(TryInsertPayloadResult {
-                    status: PayloadStatus::new(status, latest_valid_hash),
+                    status: PayloadStatus::new(status, latest_valid_hash, execution_requests),
                     already_seen,
                 })
             }
@@ -2978,8 +2979,17 @@ where
 
         // Check if block already exists - first in memory, then DB only if it could be persisted
         if self.state.tree_state.contains_hash(&block_num_hash.hash) {
+            let requests = self
+                .state
+                .tree_state
+                .executed_block_by_hash(block_num_hash.hash)
+                .map(|block| block.execution_output.requests.to_vec())
+                .unwrap_or_default();
             convert_to_block(self, input)?;
-            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid { head: block_num_hash }));
+            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
+                head: block_num_hash,
+                requests,
+            }));
         }
 
         // Only query DB if block could be persisted (number <= last persisted block).
@@ -2994,6 +3004,7 @@ where
                     convert_to_block(self, input)?;
                     return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
                         head: header.num_hash(),
+                        requests: vec![],
                     }));
                 }
                 Ok(None) => {}
@@ -3016,13 +3027,19 @@ where
         // the same post-execution hash (same transactions → same gas_used → same hash),
         // so this is deterministic and consistent, matching geth's behavior where
         // latestValidHash = newHeader.Hash() (the post-execution hash).
-        if let Some(&executed_hash) = self.state.tree_state
-            .executed_hash_by_payload_hash(&block_num_hash.hash)
+        if let Some(&executed_hash) =
+            self.state.tree_state.executed_hash_by_payload_hash(&block_num_hash.hash)
         {
             convert_to_block(self, input)?;
 
             return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
                 head: BlockNumHash::new(block_num_hash.number, executed_hash),
+                requests: self
+                    .state
+                    .tree_state
+                    .executed_block_by_hash(executed_hash)
+                    .map(|block| block.execution_output.requests.to_vec())
+                    .unwrap_or_default(),
             }))
         }
 
@@ -3108,13 +3125,13 @@ where
         self.state.tree_state.insert_executed(executed.clone());
         self.metrics.engine.executed_blocks.set(self.state.tree_state.block_count() as f64);
 
-        let head = executed.block.recovered_block.num_hash();
+        let head = executed.recovered_block().num_hash();
+        let requests = executed.execution_output.requests.to_vec();
 
         // Record mapping from pre-execution payload hash to post-execution block hash.
         // This enables CL retry dedup when gas_used modification changes the hash.
         if block_num_hash.hash != head.hash {
-            self.state.tree_state.payload_to_executed_hash
-                .insert(block_num_hash.hash, head.hash);
+            self.state.tree_state.payload_to_executed_hash.insert(block_num_hash.hash, head.hash);
         }
 
         // emit insert event
@@ -3131,7 +3148,7 @@ where
             .block_insert_total_duration
             .record(block_insert_start.elapsed().as_secs_f64());
         debug!(target: "engine::tree", block=?block_num_hash, "Finished inserting block");
-        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid { head }))
+        Ok(InsertPayloadOk::Inserted(BlockStatus::Valid { head, requests }))
     }
 
     /// Handles an error that occurred while inserting a block.
@@ -3161,7 +3178,10 @@ where
         );
 
         // Log specifically if this is a BlockGasUsed error during block insertion
-        if matches!(validation_err, error::InsertBlockValidationError::Consensus(ConsensusError::BlockGasUsed { .. })) {
+        if matches!(
+            validation_err,
+            error::InsertBlockValidationError::Consensus(ConsensusError::BlockGasUsed { .. })
+        ) {
             error!(
                 target: "engine::tree",
                 block_number = block.number(),
@@ -3216,6 +3236,7 @@ where
         Ok(PayloadStatus::new(
             PayloadStatusEnum::Invalid { validation_error: validation_err.to_string() },
             latest_valid_hash,
+            vec![],
         ))
     }
 
@@ -3240,7 +3261,7 @@ where
             };
 
         let status = PayloadStatusEnum::from(error);
-        Ok(PayloadStatus::new(status, latest_valid_hash))
+        Ok(PayloadStatus::new(status, latest_valid_hash, vec![]))
     }
 
     /// Attempts to find the header for the given block hash if it is canonical.
@@ -3415,7 +3436,7 @@ where
         //
         // if the payload is deemed VALID and the build process has begun.
         OnForkChoiceUpdated::updated_with_pending_payload_id(
-            PayloadStatus::new(PayloadStatusEnum::Valid, Some(state.head_block_hash)),
+            PayloadStatus::new(PayloadStatusEnum::Valid, Some(state.head_block_hash), vec![]),
             pending_payload_id,
         )
     }
@@ -3506,12 +3527,14 @@ where
 ///
 /// If we don't know the block's parent, we return `Disconnected`, as we can't claim that the block
 /// is valid or not.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockStatus {
     /// The block is valid and block extends canonical chain.
     Valid {
         /// Current canonical head.
         head: BlockNumHash,
+        /// Execution requests produced while validating the block.
+        requests: Vec<Bytes>,
     },
     /// The block may be valid and has an unknown missing ancestor.
     Disconnected {
@@ -3526,7 +3549,7 @@ pub enum BlockStatus {
 ///
 /// If the payload was valid, but has already been seen, [`InsertPayloadOk::AlreadySeen`] is
 /// returned, otherwise [`InsertPayloadOk::Inserted`] is returned.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InsertPayloadOk {
     /// The payload was valid, but we have already seen it.
     AlreadySeen(BlockStatus),

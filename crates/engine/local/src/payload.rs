@@ -2,7 +2,8 @@
 //! [`LocalMiner`](super::LocalMiner).
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B256};
+use alloy_evm::eth::spec::EthExecutorSpec;
+use alloy_primitives::{Address, Bytes, B256};
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_payload_primitives::PayloadAttributesBuilder;
@@ -35,7 +36,7 @@ impl<ChainSpec> LocalPayloadAttributesBuilder<ChainSpec> {
 impl<ChainSpec> PayloadAttributesBuilder<EthPayloadAttributes, ChainSpec::Header>
     for LocalPayloadAttributesBuilder<ChainSpec>
 where
-    ChainSpec: EthChainSpec + EthereumHardforks + 'static,
+    ChainSpec: EthChainSpec + EthereumHardforks + EthExecutorSpec + 'static,
 {
     fn build(&self, parent: &SealedHeader<ChainSpec::Header>) -> EthPayloadAttributes {
         let mut timestamp =
@@ -45,7 +46,7 @@ where
             timestamp = std::cmp::max(parent.timestamp().saturating_add(1), timestamp);
         }
 
-        EthPayloadAttributes {
+        let inner = alloy_rpc_types_engine::PayloadAttributes {
             timestamp,
             prev_randao: B256::random(),
             suggested_fee_recipient: Address::random(),
@@ -59,6 +60,11 @@ where
                 .then(B256::random),
             slot_number: self.chain_spec.is_amsterdam_active_at_timestamp(timestamp).then_some(0),
             ..Default::default()
-        }
+        };
+        let bridge_requests = self
+            .chain_spec
+            .is_bridge_active_at_timestamp(timestamp)
+            .then(|| Bytes::from_static(&[4, 0, 0, 0]));
+        EthPayloadAttributes::new(inner, bridge_requests)
     }
 }

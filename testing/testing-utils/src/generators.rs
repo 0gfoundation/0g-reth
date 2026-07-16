@@ -255,6 +255,7 @@ pub fn random_block<R: Rng>(
             ommers,
             withdrawals: withdrawals.map(Withdrawals::new),
             slashed: None,
+            bridge_requests: None,
         },
     }
     .seal_slow()

@@ -1612,7 +1612,7 @@ mod tests {
     use assert_matches::assert_matches;
     use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
     use reth_engine_primitives::{BeaconEngineMessage, OnForkChoiceUpdated};
-    use reth_ethereum_engine_primitives::EthEngineTypes;
+    use reth_ethereum_engine_primitives::{EthEngineTypes, EthPayloadAttributes};
     use reth_ethereum_primitives::Block;
     use reth_network_api::{
         noop::NoopNetwork, EthProtocolInfo, NetworkError, NetworkInfo, NetworkStatus,
@@ -1860,6 +1860,9 @@ mod tests {
                     },
                     blob_gas_used: 0,
                     excess_blob_gas: 0,
+                    // reth-v2.4.1 migration: 0G's alloy fork adds `slashed` to
+                    // `ExecutionPayloadV3`; this upstream fixture predates it.
+                    slashed: Vec::new(),
                 },
                 block_access_list: Bytes::from_static(b"bal"),
                 slot_number: 1,
@@ -2055,8 +2058,16 @@ mod tests {
 
     #[tokio::test]
     async fn fcu_v4_updates_shared_cell_custody_when_payload_attrs_invalid() {
-        let chain_spec: Arc<ChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
+        // reth-v2.4.1 migration: 0G gates `engine_forkchoiceUpdatedV4` on its Bridge fork — a
+        // V4 FCU *carrying attributes* is rejected with `UnsupportedFork` unless the bridge is
+        // active, and `bridge_activation_time == 0` means "disabled", which is what every
+        // non-0G spec including mainnet has. Upstream wrote this fixture against a plain
+        // mainnet spec, so 0G's version gate fired before the attribute validation this test is
+        // actually about. Enabling the bridge (and attaching the empty-list SSZ sentinel below)
+        // lets the test reach that validation with its original assertion unchanged.
+        let mut spec = ChainSpecBuilder::mainnet().amsterdam_activated().build();
+        spec.bridge_activation_time = 1;
+        let chain_spec: Arc<ChainSpec> = Arc::new(spec);
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service::<EthEngineTypes>();
         let (to_engine, mut engine_rx) = unbounded_channel();
@@ -2099,7 +2110,19 @@ mod tests {
         let custody_columns = B128::from(0b1010u128);
 
         let api_task = tokio::spawn(async move {
-            api.fork_choice_updated_v4(state, Some(payload_attributes), Some(custody_columns)).await
+            // reth-v2.4.1 migration: upstream passed alloy's `PayloadAttributes` straight in.
+            // The Engine API is generic over 0G's `EthPayloadAttributes` wrapper, and with the
+            // bridge active V4 additionally requires `bridgeRequests`; the 4-byte empty-list
+            // SSZ sentinel is what the CL emits for a block carrying no bridge messages.
+            api.fork_choice_updated_v4(
+                state,
+                Some(EthPayloadAttributes::new(
+                    payload_attributes,
+                    Some(Bytes::from_static(&[0x04, 0x00, 0x00, 0x00])),
+                )),
+                Some(custody_columns),
+            )
+            .await
         });
 
         let request = tokio::time::timeout(std::time::Duration::from_secs(1), engine_rx.recv())
@@ -2154,7 +2177,8 @@ mod tests {
         };
 
         let api_task = tokio::spawn(async move {
-            api.fork_choice_updated_v3(state, Some(payload_attributes)).await
+            // reth-v2.4.1 migration: same `EthPayloadAttributes` wrapper conversion as above.
+            api.fork_choice_updated_v3(state, Some(payload_attributes.into())).await
         });
 
         let request =
@@ -2203,7 +2227,8 @@ mod tests {
         };
 
         let api_task = tokio::spawn(async move {
-            api.fork_choice_updated_v3(state, Some(payload_attributes)).await
+            // reth-v2.4.1 migration: same `EthPayloadAttributes` wrapper conversion as above.
+            api.fork_choice_updated_v3(state, Some(payload_attributes.into())).await
         });
 
         let request =

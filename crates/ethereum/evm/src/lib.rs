@@ -18,7 +18,7 @@
 extern crate alloc;
 
 use alloc::{borrow::Cow, sync::Arc};
-use alloy_consensus::Header;
+use alloy_consensus::{BlockHeader as _, Header};
 use alloy_evm::{
     eth::{EthBlockExecutionCtx, EthBlockExecutorFactory},
     EthEvmFactory, FromRecoveredTx, FromTxWithEncoded,
@@ -69,6 +69,48 @@ pub mod execute {
 
 mod build;
 pub use build::EthBlockAssembler;
+
+/// Decodes the CL-provided SSZ `BridgeRequests` blob into `Bridge.parkRemoteMessages` calldata.
+///
+/// Decoding errors degrade to `None` (system call skipped) — a malformed blob would already
+/// have failed CL-side payload validation upstream, and treating it as a hard error here would
+/// prevent the EL from making progress at all.
+fn bridge_calldata_from_ssz(
+    chain_id: u64,
+    raw: &[u8],
+    fee_recipient: alloy_primitives::Address,
+    path: &'static str,
+) -> Option<Bytes> {
+    match reth_0g_bridge::decode_bridge_messages(raw) {
+        Ok(msgs) => {
+            let cd = reth_0g_bridge::encode_park_remote_messages_calldata(
+                &msgs,
+                chain_id,
+                fee_recipient,
+            );
+            tracing::debug!(
+                target: "0g::evm::bridge",
+                ssz_len = raw.len(),
+                msg_count = msgs.len(),
+                calldata_len = cd.len(),
+                ?fee_recipient,
+                path,
+                "decoded bridge SSZ to parkRemoteMessages calldata"
+            );
+            Some(cd)
+        }
+        Err(err) => {
+            tracing::warn!(
+                target: "0g::evm::bridge",
+                ?err,
+                ssz_len = raw.len(),
+                path,
+                "failed to decode bridge SSZ blob — system call will be skipped"
+            );
+            None
+        }
+    }
+}
 
 mod receipt;
 pub use receipt::RethReceiptBuilder;
@@ -231,6 +273,17 @@ where
         &self,
         block: &'a SealedBlock<Block>,
     ) -> Result<EthBlockExecutionCtx<'a>, Self::Error> {
+        let timestamp = block.timestamp();
+        let raw = block.body().bridge_requests.as_ref();
+        let bridge_request = raw.and_then(|raw| {
+            bridge_calldata_from_ssz(
+                self.chain_spec().chain().id(),
+                raw,
+                block.header().beneficiary,
+                "context_for_block (historical)",
+            )
+            .map(Cow::Owned)
+        });
         Ok(EthBlockExecutionCtx {
             tx_count_hint: Some(block.transaction_count()),
             parent_hash: block.header().parent_hash,
@@ -238,8 +291,11 @@ where
             ommers: &block.body().ommers,
             withdrawals: block.body().withdrawals.as_ref().map(|w| Cow::Borrowed(w.as_slice())),
             slashed: block.body().slashed.as_ref().map(|w| Cow::Borrowed(w.as_slice())),
+            bridge_request,
+            bridge_request_raw: raw.map(Cow::Borrowed),
             extra_data: block.header().extra_data.clone(),
             slot_number: block.header().slot_number,
+            timestamp,
         })
     }
 
@@ -248,6 +304,23 @@ where
         parent: &SealedHeader,
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<EthBlockExecutionCtx<'_>, Self::Error> {
+        // 0G bridge fee path: the same address that the EVM will use as `block.coinbase` —
+        // post-MinerReward fork, CL writes `withdrawals[0].Address` (proposer's withdrawal
+        // address) into `attrs.suggested_fee_recipient`. We thread this into every
+        // `InboundMessage.feeRecipient` so the dest-chain Bridge can pay the per-message fee
+        // to the dest-block proposer. The verifier path in `context_for_payload` sources the
+        // identical address from `payload.beneficiary` (the block-header coinbase), giving
+        // build/verify byte-equal calldata.
+        let fee_recipient = attributes.suggested_fee_recipient;
+        let bridge_request = attributes.bridge_request.as_ref().and_then(|raw| {
+            bridge_calldata_from_ssz(
+                self.chain_spec().chain().id(),
+                raw,
+                fee_recipient,
+                "context_for_next_block (build)",
+            )
+            .map(Cow::Owned)
+        });
         Ok(EthBlockExecutionCtx {
             tx_count_hint: None,
             parent_hash: parent.hash(),
@@ -255,8 +328,11 @@ where
             ommers: &[],
             withdrawals: attributes.withdrawals.map(|w| Cow::Owned(w.into_inner())),
             slashed: None,
+            bridge_request,
+            bridge_request_raw: attributes.bridge_request.map(Cow::Owned),
             extra_data: attributes.extra_data,
             slot_number: attributes.slot_number,
+            timestamp: attributes.timestamp,
         })
     }
 }
@@ -331,6 +407,24 @@ where
         &self,
         payload: &'a ExecutionData,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        let timestamp = payload.payload.timestamp();
+        let bridge_entry = payload
+            .sidecar
+            .requests()
+            .and_then(|requests| reth_0g_bridge::find_bridge_entry(requests.iter()));
+        // 0G bridge fee path: source the dest-block coinbase from the payload's fee_recipient
+        // (the block-header beneficiary the proposer sealed), not from attributes — the verifier
+        // must reproduce byte-identical calldata to the build path.
+        let bridge_request_raw = bridge_entry.map(|entry| entry.slice(1..));
+        let bridge_request = bridge_request_raw.as_ref().and_then(|raw| {
+            bridge_calldata_from_ssz(
+                self.chain_spec().chain().id(),
+                raw,
+                payload.payload.fee_recipient(),
+                "context_for_payload (verify)",
+            )
+            .map(Cow::Owned)
+        });
         Ok(EthBlockExecutionCtx {
             tx_count_hint: Some(payload.payload.transactions().len()),
             parent_hash: payload.parent_hash(),
@@ -342,8 +436,11 @@ where
                 .slashed()
                 .filter(|slashed| !slashed.is_empty())
                 .map(|slashed| Cow::Owned(slashed.to_vec())),
+            bridge_request,
+            bridge_request_raw: bridge_request_raw.map(Cow::Owned),
             extra_data: payload.payload.as_v1().extra_data.clone(),
             slot_number: payload.payload.as_v4().map(|v4| v4.slot_number),
+            timestamp,
         })
     }
 

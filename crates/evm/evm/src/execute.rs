@@ -369,10 +369,7 @@ pub trait BlockBuilder {
 
     /// Adds a transaction to the block without executing it.
     /// This only stores the transaction in internal state, no EVM execution occurs.
-    fn add_transaction_without_execution(
-        &mut self,
-        tx: impl ExecutorTx<Self::Executor>,
-    );
+    fn add_transaction_without_execution(&mut self, tx: impl ExecutorTx<Self::Executor>);
 
     /// Completes the block building process and returns the [`BlockBuilderOutcome`].
     ///
@@ -506,10 +503,7 @@ where
         }
     }
 
-    fn add_transaction_without_execution(
-        &mut self,
-        tx: impl ExecutorTx<Self::Executor>,
-    ) {
+    fn add_transaction_without_execution(&mut self, tx: impl ExecutorTx<Self::Executor>) {
         let (_, tx) = tx.into_parts();
         self.transactions.push(tx);
     }

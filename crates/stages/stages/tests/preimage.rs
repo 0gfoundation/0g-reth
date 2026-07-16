@@ -939,7 +939,15 @@ fn execute_and_commit_block(
     let block_with_senders = RecoveredBlock::new_unhashed(
         Block::new(
             temp_header,
-            BlockBody { transactions: transactions.clone(), ommers: Vec::new(), withdrawals: None },
+            // reth-v2.4.1 migration: 0G's alloy fork adds `slashed` / `bridge_requests` to
+            // `BlockBody`; upstream's literal here was a single line of three fields.
+            BlockBody {
+                transactions: transactions.clone(),
+                ommers: Vec::new(),
+                withdrawals: None,
+                slashed: None,
+                bridge_requests: None,
+            },
         ),
         vec![signer_address; transactions.len()],
     );
@@ -986,7 +994,14 @@ fn execute_and_commit_block(
 
     let block: SealedBlock<Block> = SealedBlock::seal_parts(
         header,
-        BlockBody { transactions, ommers: Vec::new(), withdrawals: None },
+        // reth-v2.4.1 migration: same 0G fork fields as above.
+        BlockBody {
+            transactions,
+            ommers: Vec::new(),
+            withdrawals: None,
+            slashed: None,
+            bridge_requests: None,
+        },
     );
 
     let plain_state = output.state.to_plain_state(OriginalValuesKnown::Yes);

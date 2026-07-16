@@ -24,6 +24,7 @@ alloy-rpc-types-engine.workspace = true
 
 # misc
 serde.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
@@ -37,6 +38,7 @@ std = [
     "alloy-eips/std",
     "alloy-rpc-types-engine/std",
     "serde/std",
+    "sha2/std",
     "serde_json/std",
     "thiserror/std",
     "reth-engine-primitives/std",
