@@ -723,19 +723,19 @@ vergen-git2 = "=1.0.5"
 # whose API matches this revm.
 # NOTE: this single top-level [patch.crates-io] revm also overrides alloy-evm's crates.io `revm` dep,
 # so the whole graph resolves to ONE revm at this rev.
-revm = { path = "/home/harry/revm-perpstate/crates/revm", package = "revm" }
-revm-bytecode = { path = "/home/harry/revm-perpstate/crates/bytecode", package = "revm-bytecode" }
-revm-database = { path = "/home/harry/revm-perpstate/crates/database", package = "revm-database" }
-revm-state = { path = "/home/harry/revm-perpstate/crates/state", package = "revm-state" }
-revm-primitives = { path = "/home/harry/revm-perpstate/crates/primitives", package = "revm-primitives" }
-revm-interpreter = { path = "/home/harry/revm-perpstate/crates/interpreter", package = "revm-interpreter" }
-revm-inspector = { path = "/home/harry/revm-perpstate/crates/inspector", package = "revm-inspector" }
-revm-context = { path = "/home/harry/revm-perpstate/crates/context", package = "revm-context" }
-revm-context-interface = { path = "/home/harry/revm-perpstate/crates/context/interface", package = "revm-context-interface" }
-revm-database-interface = { path = "/home/harry/revm-perpstate/crates/database/interface", package = "revm-database-interface" }
-op-revm = { path = "/home/harry/revm-perpstate/crates/op-revm", package = "op-revm" }
+revm = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "revm-database-interface" }
+op-revm = { git = "https://github.com/0gfoundation/revm", rev = "b23c73b2a8b393554e14977a749133a21167f88e", package = "op-revm" }
 
-alloy-evm = { path = "/home/harry/alloy-evm-perpstate/crates/evm", package = "alloy-evm" }
+alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "06cbe7b7600885e51a5246d995b410cabaae718d", package = "alloy-evm" }
 
 # Patch alloy 1.0.35 with 0g-alloy
 alloy-consensus = { git = "https://github.com/0gfoundation/0g-alloy", rev = "54d1e2d3fbf71a7bdb8bc802e538e3c63b1e2e03", package = "alloy-consensus" }
