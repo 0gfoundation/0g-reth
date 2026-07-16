@@ -468,6 +468,11 @@ where
             // reth-v2.8.1 migration: 6a4f950b1's alloy-evm (`1798948c`, replayed as `5b46d25f`)
             // adds `slashed`; copied from the last segment like the other fields.
             slashed: last_seg.ctx.slashed.clone(),
+            // reth-v2.8.1 migration: 880ce24ad's alloy-evm (replayed as `a3b96e0b`) adds
+            // `bridge_request` and `bridge_request_raw`; copied from the last segment like the
+            // other fields (same as the reth v2.4.1 migration).
+            bridge_request: last_seg.ctx.bridge_request.clone(),
+            bridge_request_raw: last_seg.ctx.bridge_request_raw.clone(),
             extra_data: last_seg.ctx.extra_data.clone(),
             tx_count_hint: last_seg.ctx.tx_count_hint,
             slot_number: last_seg.ctx.slot_number,

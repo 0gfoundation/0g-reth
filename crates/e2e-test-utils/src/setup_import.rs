@@ -74,7 +74,11 @@ pub async fn setup_engine_with_chain_import(
     let runtime = Runtime::test();
     let attributes_generator = {
         let chain_spec = chain_spec.clone();
-        Arc::new(move |timestamp| eth_payload_attributes(&chain_spec, timestamp))
+        // reth-v2.8.1 migration: this helper is new upstream after reth 1.8.1 and returned
+        // alloy's `PayloadAttributes`, which was `EthEngineTypes`' attributes type upstream.
+        // 880ce24ad made that type 0G's `EthPayloadAttributes` wrapper, so the attributes are
+        // wrapped with no bridge blob, as `E2ETestSetupBuilder::new` already does with `.into()`.
+        Arc::new(move |timestamp| eth_payload_attributes(&chain_spec, timestamp).into())
     };
 
     // Create nodes with imported data.

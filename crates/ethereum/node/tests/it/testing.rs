@@ -1,11 +1,11 @@
 //! E2E tests for the testing RPC namespace.
 
 use alloy_primitives::{Bytes, B256};
+use alloy_rpc_types_engine::PayloadAttributes;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use jsonrpsee_core::client::ClientT;
 use reth_chainspec::EthereumHardfork;
 use reth_e2e_test_utils::{eth_payload_attributes, test_chain_spec, E2ETestSetupExt};
-use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_node_ethereum::EthereumNode;
 use reth_rpc_api::{TestingBuildBlockRequestV1, TestingBuildBlockResponseV1};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection};
@@ -75,7 +75,10 @@ async fn testing_rpc_commit_block_works() -> eyre::Result<()> {
 
     let timestamp = chain_spec.genesis().timestamp + 1;
     let target_gas_limit = chain_spec.genesis().gas_limit - 100;
-    let payload_attributes = EthPayloadAttributes {
+    // reth-v2.8.1 migration: upstream test written against `EthPayloadAttributes` as an alias of
+    // alloy's `PayloadAttributes`; 880ce24ad made it a wrapper (`inner` + `bridge_requests`), so
+    // the flat literal names the alloy type, which `testing_commitBlockV1` takes.
+    let payload_attributes = PayloadAttributes {
         target_gas_limit: Some(target_gas_limit),
         ..eth_payload_attributes(&chain_spec, timestamp)
     };

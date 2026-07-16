@@ -620,6 +620,10 @@ async fn test_engine_ssz_request_validation() -> eyre::Result<()> {
             },
             blob_gas_used: 0,
             excess_blob_gas: 0,
+            // reth-v2.8.1 migration: upstream test; 0G's alloy fork adds `slashed` to
+            // `ExecutionPayloadV3` (pinned by 6a4f950b1). Hidden until this object because
+            // `reth-e2e-test-utils` did not compile.
+            slashed: vec![],
         };
         payload.payload_inner.payload_inner.extra_data = vec![0; extra_data_len].into();
         payload.payload_inner.payload_inner.transactions = transactions;

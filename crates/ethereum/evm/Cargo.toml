@@ -20,6 +20,7 @@ reth-ethereum-primitives.workspace = true
 revm.workspace = true
 reth-evm.workspace = true
 reth-storage-errors.workspace = true
+reth-0g-bridge.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
@@ -32,11 +33,19 @@ metrics = { workspace = true, optional = true }
 reth-metrics = { workspace = true, optional = true }
 revmc = { workspace = true, features = ["alloy-evm"], optional = true }
 
+# Misc
+# reth-v2.8.1 migration: 880ce24ad added `tracing` under `# Misc`, next to `parking_lot` and
+# `derive_more`; upstream has since dropped those two optional deps, so `tracing` is the only
+# entry left here.
+tracing.workspace = true
+
 [dev-dependencies]
 reth-testing-utils.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
 secp256k1.workspace = true
 alloy-genesis.workspace = true
+alloy-sol-types.workspace = true
+ethereum_ssz.workspace = true
 
 [features]
 default = ["std"]
@@ -56,6 +65,9 @@ std = [
     "reth-ethereum-primitives/std",
     "alloy-rpc-types-engine/std",
     "reth-storage-errors/std",
+    "reth-0g-bridge/std",
+    "alloy-sol-types/std",
+    "tracing/std"
 ]
 jit = [
     "std",

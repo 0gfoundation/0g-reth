@@ -1044,16 +1044,22 @@ fn process_payload_attributes_shares_sparse_trie_during_validation_fallback() {
     let state = test_harness.fcu_state(head_hash);
     test_harness.tree.state.set_pending_sparse_trie_prune(true);
 
+    // reth-v2.8.1 migration: upstream test written against `EthPayloadAttributes` as an alias of
+    // alloy's `PayloadAttributes`; 880ce24ad made it a wrapper (`inner` + `bridge_requests`), so
+    // the same literal is wrapped with no bridge blob. Same for the three tests further below.
     let updated = test_harness.tree.process_payload_attributes(
-        EthPayloadAttributes {
-            timestamp: head.timestamp() + 1,
-            prev_randao: B256::ZERO,
-            suggested_fee_recipient: Default::default(),
-            withdrawals: None,
-            parent_beacon_block_root: None,
-            slot_number: None,
-            ..Default::default()
-        },
+        EthPayloadAttributes::new(
+            alloy_rpc_types_engine::PayloadAttributes {
+                timestamp: head.timestamp() + 1,
+                prev_randao: B256::ZERO,
+                suggested_fee_recipient: Default::default(),
+                withdrawals: None,
+                parent_beacon_block_root: None,
+                slot_number: None,
+                ..Default::default()
+            },
+            None,
+        ),
         &head,
         state,
     );
@@ -1878,15 +1884,18 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
 
     // An FCU to an ancestor below the latest known finalized block would reorg out the
     // finalized block and is rejected, with or without payload attributes.
-    let payload_attributes = EthPayloadAttributes {
-        timestamp: ancestor.timestamp() + 1,
-        prev_randao: B256::ZERO,
-        suggested_fee_recipient: Default::default(),
-        withdrawals: None,
-        parent_beacon_block_root: None,
-        slot_number: None,
-        ..Default::default()
-    };
+    let payload_attributes = EthPayloadAttributes::new(
+        alloy_rpc_types_engine::PayloadAttributes {
+            timestamp: ancestor.timestamp() + 1,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Default::default(),
+            withdrawals: None,
+            parent_beacon_block_root: None,
+            slot_number: None,
+            ..Default::default()
+        },
+        None,
+    );
     for attrs in [Some(payload_attributes), None] {
         let err = test_harness
             .tree
@@ -1915,15 +1924,18 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
 
     // the finalized block itself is not below finality and can become the parent of the next
     // block
-    let payload_attributes = EthPayloadAttributes {
-        timestamp: finalized.timestamp() + 1,
-        prev_randao: B256::ZERO,
-        suggested_fee_recipient: Default::default(),
-        withdrawals: None,
-        parent_beacon_block_root: None,
-        slot_number: None,
-        ..Default::default()
-    };
+    let payload_attributes = EthPayloadAttributes::new(
+        alloy_rpc_types_engine::PayloadAttributes {
+            timestamp: finalized.timestamp() + 1,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Default::default(),
+            withdrawals: None,
+            parent_beacon_block_root: None,
+            slot_number: None,
+            ..Default::default()
+        },
+        None,
+    );
     let outcome = test_harness
         .tree
         .on_forkchoice_updated(
@@ -1958,15 +1970,18 @@ async fn test_fcu_with_canonical_ancestor_above_finalized_starts_payload_build()
     let ancestor = blocks[2].recovered_block();
     test_harness.tree.canonical_in_memory_state.set_finalized(finalized.clone_sealed_header());
 
-    let payload_attributes = EthPayloadAttributes {
-        timestamp: ancestor.timestamp() + 1,
-        prev_randao: B256::ZERO,
-        suggested_fee_recipient: Default::default(),
-        withdrawals: None,
-        parent_beacon_block_root: None,
-        slot_number: None,
-        ..Default::default()
-    };
+    let payload_attributes = EthPayloadAttributes::new(
+        alloy_rpc_types_engine::PayloadAttributes {
+            timestamp: ancestor.timestamp() + 1,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Default::default(),
+            withdrawals: None,
+            parent_beacon_block_root: None,
+            slot_number: None,
+            ..Default::default()
+        },
+        None,
+    );
     let outcome = test_harness
         .tree
         .on_forkchoice_updated(

@@ -17,7 +17,10 @@ pub use accounts::AccountBeforeTx;
 
 /// Blocks
 pub mod blocks;
-pub use blocks::{StaticFileBlockWithdrawals, StoredBlockBodyIndices, StoredBlockSlashed, StoredBlockWithdrawals};
+pub use blocks::{
+    StaticFileBlockWithdrawals, StoredBlockBodyIndices, StoredBlockBridgeRequests,
+    StoredBlockSlashed, StoredBlockWithdrawals,
+};
 
 /// Storage
 pub mod storage;

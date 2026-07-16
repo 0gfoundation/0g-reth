@@ -165,6 +165,11 @@ where
                     withdrawals: withdrawals.map(Into::into),
                     extra_data: request.extra_data.unwrap_or_default(),
                     slot_number: request.payload_attributes.slot_number,
+                    // reth-v2.8.1 migration: upstream's `testing_buildBlockV1` is new after reth
+                    // 1.8.1; 880ce24ad added `bridge_request` to `NextBlockEnvAttributes`. The
+                    // request carries no bridge blob, so no bridge system call runs (as in
+                    // 880ce24ad's pending-block env).
+                    bridge_request: None,
                 };
 
                 let mut builder = evm_config

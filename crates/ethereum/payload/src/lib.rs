@@ -11,7 +11,6 @@
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_primitives::{Address, U256};
 use alloy_rlp::Encodable;
-use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig,
@@ -19,6 +18,10 @@ use reth_basic_payload_builder::{
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_errors::ConsensusError;
+// reth-v2.8.1 migration: 880ce24ad read `bridge_requests` from `EthPayloadBuilderAttributes`,
+// which upstream (#23202) removed; the builder now takes the payload attributes directly, so it
+// uses 0G's `EthPayloadAttributes` wrapper (which carries the blob) instead of alloy's type.
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
 // reth-v2.8.1 migration: `block::TxResult` (upstream's, used only by the execution closure that
 // f1a5d5573 removes) is dropped with it, as the original dropped `CommitChanges`.
@@ -210,6 +213,11 @@ where
                 withdrawals: attributes.withdrawals.clone().map(Into::into),
                 extra_data: builder_config.extra_data.clone(),
                 slot_number: attributes.slot_number(),
+                // 0G: forward the SSZ blob the CL sent on `engine_forkchoiceUpdatedV4`. The
+                // EL config's `context_for_next_block` decodes this into ABI calldata for
+                // `Bridge.parkRemoteMessages` so the bridge system call fires inside
+                // `EthBlockExecutor::finish()` during local block building.
+                bridge_request: attributes.bridge_requests.clone(),
             },
         )
         .map_err(PayloadBuilderError::other)?;
@@ -507,6 +515,13 @@ where
         builder.finish(state_provider.as_ref(), None)?
     };
 
+    // 0G: `execution_result.requests` already contains the `0xf0` bridge entry (if any) —
+    // `EthBlockExecutor::finish` appends it from `EthBlockExecutionCtx.bridge_request_raw`
+    // before `EthBlockAssembler::assemble_block` reads `requests` to compute `requests_hash`.
+    // That is the **only** correct place to push: doing it here, post-`builder.finish()`,
+    // would leave the sealed `block.header.requests_hash` covering only deposits/withdrawals/
+    // consolidations while the wire response includes 0xf0, and the CL's re-assembled block
+    // hash would diverge from `payload.block_hash`.
     let requests = chain_spec
         .is_prague_active_at_timestamp(attributes.timestamp)
         .then_some(execution_result.requests);

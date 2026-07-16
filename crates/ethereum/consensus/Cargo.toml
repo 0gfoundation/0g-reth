@@ -22,6 +22,7 @@ reth-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+alloy-evm.workspace = true
 
 tracing.workspace = true
 
@@ -30,6 +31,7 @@ default = ["std"]
 std = [
     "alloy-consensus/std",
     "alloy-eips/std",
+    "alloy-evm/std",
     "alloy-primitives/std",
     "reth-chainspec/std",
     "reth-consensus/std",

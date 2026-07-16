@@ -24,6 +24,10 @@ alloy-rpc-types-engine.workspace = true
 
 # misc
 serde.workspace = true
+# reth-v2.8.1 migration: `sha2` was already a dependency when 880ce24ad extended this crate's
+# `payload_id`; upstream moved `payload_id` out and dropped it, and 0G's bridge-aware
+# `payload_id` here still hashes with it.
+sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
@@ -37,6 +41,7 @@ std = [
     "alloy-eips/std",
     "alloy-rpc-types-engine/std",
     "serde/std",
+    "sha2/std",
     "serde_json/std",
     "thiserror/std",
     "reth-engine-primitives/std",

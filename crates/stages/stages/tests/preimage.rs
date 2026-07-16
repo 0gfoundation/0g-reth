@@ -545,7 +545,8 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
     );
 
     // reth-v2.8.1 migration: upstream test; 0G's alloy fork gives `BlockBody` a `slashed` field
-    // (6a4f950b1), set to `None` in every body this file builds.
+    // (6a4f950b1) and a `bridge_requests` field (880ce24ad), both set to `None` in every body
+    // this file builds.
     let preview_block = RecoveredBlock::new_unhashed(
         Block::new(
             build_execution_header(genesis.hash(), 1, 12),
@@ -554,6 +555,7 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
                 ommers: Vec::new(),
                 withdrawals: None,
                 slashed: None,
+                bridge_requests: None,
             },
         ),
         vec![signer_address],
@@ -1096,12 +1098,14 @@ fn execute_and_commit_block(
     let block_with_senders = RecoveredBlock::new_unhashed(
         Block::new(
             temp_header,
-            // reth-v2.8.1 migration: `slashed: None`, see `preview_block` above.
+            // reth-v2.8.1 migration: `slashed`/`bridge_requests` `None`, see `preview_block`
+            // above.
             BlockBody {
                 transactions: transactions.clone(),
                 ommers: Vec::new(),
                 withdrawals: None,
                 slashed: None,
+                bridge_requests: None,
             },
         ),
         vec![signer_address; transactions.len()],
@@ -1147,10 +1151,16 @@ fn execute_and_commit_block(
         ..Default::default()
     };
 
-    // reth-v2.8.1 migration: `slashed: None`, see `preview_block` above.
+    // reth-v2.8.1 migration: `slashed`/`bridge_requests` `None`, see `preview_block` above.
     let block: SealedBlock<Block> = SealedBlock::seal_parts(
         header,
-        BlockBody { transactions, ommers: Vec::new(), withdrawals: None, slashed: None },
+        BlockBody {
+            transactions,
+            ommers: Vec::new(),
+            withdrawals: None,
+            slashed: None,
+            bridge_requests: None,
+        },
     );
 
     let plain_state = output.state.to_plain_state(OriginalValuesKnown::Yes);

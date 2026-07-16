@@ -46,6 +46,7 @@ reth-snap-sync.workspace = true
 reth-stages.workspace = true
 reth-engine-tree.workspace = true
 reth-network-p2p.workspace = true
+reth-0g-bridge.workspace = true
 # ethereum
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
@@ -55,6 +56,7 @@ jsonrpsee.workspace = true
 alloy-network.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine = { workspace = true, features = ["ssz"] }
+alloy-evm.workspace = true
 
 # async
 tokio = { workspace = true, features = ["sync"] }
@@ -73,6 +75,7 @@ http-body-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tower.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 reth-db.workspace = true

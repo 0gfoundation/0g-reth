@@ -33,7 +33,7 @@ use http_body_util::{BodyExt, LengthLimitError, Limited};
 use jsonrpsee::server::{HttpBody, HttpRequest, HttpResponse};
 use reth_chainspec::{EthereumHardfork, EthereumHardforks};
 use reth_engine_primitives::EngineApiValidator;
-use reth_ethereum_engine_primitives::EthEngineTypes;
+use reth_ethereum_engine_primitives::{EthEngineTypes, EthPayloadAttributes};
 use reth_provider::{BalProvider, BlockReader, StateProviderFactory};
 use reth_rpc::EngineApi;
 use reth_rpc_engine_api::EngineApiError;
@@ -492,6 +492,13 @@ where
         }) {
             return problem_response(STATUS_BAD_REQUEST, "unsupported-fork", None)
         }
+
+        // reth-v2.8.1 migration: the SSZ Engine API proxy is new upstream after reth 1.8.1.
+        // 880ce24ad made the engine API take 0G's `EthPayloadAttributes` (standard attributes plus
+        // the bridge blob); the SSZ containers carry no `bridgeRequests`, so the decoded
+        // attributes are wrapped with no blob (same as the reth v2.4.1 migration). Post-Bridge
+        // V4 builds over SSZ are then rejected by the engine validator as missing the blob.
+        let attrs = attrs.map(EthPayloadAttributes::from);
 
         let response = match fork.forkchoice_version() {
             1 => self.fork_choice_updated_v1_metered(state, attrs).await,

@@ -45,20 +45,33 @@ where
             timestamp = std::cmp::max(parent.timestamp().saturating_add(1), timestamp);
         }
 
-        EthPayloadAttributes {
-            timestamp,
-            prev_randao: B256::random(),
-            suggested_fee_recipient: Address::random(),
-            withdrawals: self
-                .chain_spec
-                .is_shanghai_active_at_timestamp(timestamp)
-                .then(Default::default),
-            parent_beacon_block_root: self
-                .chain_spec
-                .is_cancun_active_at_timestamp(timestamp)
-                .then(B256::random),
-            slot_number: self.chain_spec.is_amsterdam_active_at_timestamp(timestamp).then_some(0),
-            ..Default::default()
-        }
+        // reth-v2.8.1 migration: 880ce24ad wrapped the standard attributes in 0G's
+        // `EthPayloadAttributes::new(.., None)`; the inner literal is upstream's (timestamp from
+        // the parent, `slot_number`). The op impl it also touched is gone with op-reth.
+        EthPayloadAttributes::new(
+            alloy_rpc_types_engine::PayloadAttributes {
+                timestamp,
+                prev_randao: B256::random(),
+                suggested_fee_recipient: Address::random(),
+                withdrawals: self
+                    .chain_spec
+                    .is_shanghai_active_at_timestamp(timestamp)
+                    .then(Default::default),
+                parent_beacon_block_root: self
+                    .chain_spec
+                    .is_cancun_active_at_timestamp(timestamp)
+                    .then(B256::random),
+                slot_number: self
+                    .chain_spec
+                    .is_amsterdam_active_at_timestamp(timestamp)
+                    .then_some(0),
+                ..Default::default()
+            },
+            // Local mining (dev-only) does not poll a foreign EL for bridge messages.
+            // Post-Bridge-fork the EL validator will refuse the resulting V4 attrs because
+            // `bridge_requests` is `None`; production 0G nodes drive payload building from
+            // CometBFT (`engine_forkchoiceUpdatedV4` from CL), not from `LocalMiner`.
+            None,
+        )
     }
 }

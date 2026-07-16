@@ -1,5 +1,5 @@
 use alloy_eips::eip4895::Withdrawals;
-use alloy_primitives::TxNumber;
+use alloy_primitives::{Bytes, TxNumber};
 use core::ops::Range;
 
 /// Total number of transactions.
@@ -104,6 +104,26 @@ pub struct StoredBlockSlashed {
 // their definitions, as for `StoredBlockWithdrawals` above.
 #[cfg(any(test, feature = "reth-codec"))]
 reth_codecs::impl_compression_for_compact!(StoredBlockSlashed);
+
+/// The storage representation of the 0G bridge-requests blob (the block body's
+/// `bridge_requests` field: the CL-determined `BridgeRequests` SSZ bytes, stored verbatim so
+/// replay re-emits the EIP-7685 `0xf0` entry byte-identically). A row exists for every
+/// post-Bridge-fork block, including the 4-byte empty-list encoding; pre-Bridge blocks have no
+/// row.
+#[derive(Debug, Default, Eq, PartialEq, Clone)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StoredBlockBridgeRequests {
+    /// The verbatim bridge-requests SSZ blob for the block.
+    pub bridge_requests: Bytes,
+}
+
+// reth-v2.8.1 migration: 880ce24ad listed `StoredBlockBridgeRequests` in `db-api`'s local
+// `impl_compression_for_compact!`; same relocation as `StoredBlockSlashed` above.
+#[cfg(any(test, feature = "reth-codec"))]
+reth_codecs::impl_compression_for_compact!(StoredBlockBridgeRequests);
 
 /// A storage representation of block withdrawals that is static file friendly. An inner `None`
 /// represents a pre-merge block.

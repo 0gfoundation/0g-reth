@@ -120,6 +120,7 @@ pub use alloy_evm::{
 ///     withdrawals: Some(withdrawals),
 ///     parent_beacon_block_root: Some(beacon_root),
 ///     slot_number: None,
+///     bridge_request: None,
 /// };
 ///
 /// // Build a new block on top of parent
@@ -627,4 +628,12 @@ pub struct NextBlockEnvAttributes {
     pub extra_data: Bytes,
     /// Optional slot number for post-Amsterdam payloads.
     pub slot_number: Option<u64>,
+    /// 0G: SSZ-encoded `BridgeRequests` blob from the CL, carried on
+    /// `engine_forkchoiceUpdatedV4.payloadAttributes.bridgeRequests`.
+    ///
+    /// `Some(bytes)` post-Bridge-fork: empty bytes mean "no messages this block" (still a
+    /// non-null SSZ list). `None` pre-Bridge-fork. The EL passes the blob through unchanged
+    /// (no recompute) when emitting the `0xf0` entry on `engine_getPayloadV4` so the proposer
+    /// and the verifier see byte-identical executionRequests.
+    pub bridge_request: Option<Bytes>,
 }

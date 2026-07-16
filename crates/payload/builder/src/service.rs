@@ -690,15 +690,21 @@ mod tests {
             let dropped = Arc::new(AtomicBool::new(false));
             let lease = PayloadBuilderLease::new(DropProbe(Arc::clone(&dropped)));
             let input = BuildNewPayload {
-                attributes: EthPayloadAttributes {
-                    timestamp: 1,
-                    prev_randao: B256::ZERO,
-                    suggested_fee_recipient: Address::ZERO,
-                    withdrawals: None,
-                    parent_beacon_block_root: None,
-                    slot_number: None,
-                    ..Default::default()
-                },
+                // reth-v2.8.1 migration: upstream test written against alloy's flat
+                // `PayloadAttributes`; 880ce24ad made `EthPayloadAttributes` a wrapper around it
+                // plus the 0G bridge blob, so the same literal is wrapped with no blob.
+                attributes: EthPayloadAttributes::new(
+                    alloy_rpc_types::engine::PayloadAttributes {
+                        timestamp: 1,
+                        prev_randao: B256::ZERO,
+                        suggested_fee_recipient: Address::ZERO,
+                        withdrawals: None,
+                        parent_beacon_block_root: None,
+                        slot_number: None,
+                        ..Default::default()
+                    },
+                    None,
+                ),
                 parent_hash: B256::ZERO,
                 resources: PayloadBuilderResources::default().with_lease(lease),
             };

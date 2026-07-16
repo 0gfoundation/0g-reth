@@ -26,7 +26,7 @@ pub use integer_list::IntegerList;
 pub use metadata::*;
 pub use reth_db_models::{
     AccountBeforeTx, ClientVersion, StaticFileBlockWithdrawals, StorageBeforeTx,
-    StoredBlockBodyIndices, StoredBlockSlashed, StoredBlockWithdrawals,
+    StoredBlockBodyIndices, StoredBlockBridgeRequests, StoredBlockSlashed, StoredBlockWithdrawals,
 };
 pub use sharded_key::ShardedKey;
 pub use snap::*;
@@ -211,10 +211,10 @@ impl Decode for ClientVersion {
     }
 }
 
-// reth-v2.8.1 migration: 6a4f950b1 added `StoredBlockSlashed` to this crate's local
-// `impl_compression_for_compact!` list. Upstream moved that macro to `reth_codecs` and each
-// `db-models` type now implements compression next to its definition, so `StoredBlockSlashed`
-// does so in `db-models/src/blocks.rs`.
+// reth-v2.8.1 migration: 6a4f950b1 and 880ce24ad added `StoredBlockSlashed` and
+// `StoredBlockBridgeRequests` to this crate's local `impl_compression_for_compact!` list.
+// Upstream moved that macro to `reth_codecs` and each `db-models` type now implements compression
+// next to its definition, so both do so in `db-models/src/blocks.rs`.
 impl_compression_for_compact!(StoredBlockOmmers<H>, CompactU256);
 
 /// Adds wrapper structs for some primitive types so they can use `StructFlags` from Compact, when
@@ -292,6 +292,7 @@ mod tests {
         assert_eq!(StoredBlockBodyIndices::bitflag_encoded_bytes(), 1);
         assert_eq!(StoredBlockWithdrawals::bitflag_encoded_bytes(), 0);
         assert_eq!(StoredBlockSlashed::bitflag_encoded_bytes(), 0);
+        assert_eq!(StoredBlockBridgeRequests::bitflag_encoded_bytes(), 0);
         assert_eq!(StorageHashingCheckpoint::bitflag_encoded_bytes(), 1);
 
         validate_bitflag_backwards_compat!(Account, UnusedBits::NotZero);
@@ -312,6 +313,7 @@ mod tests {
         validate_bitflag_backwards_compat!(StoredBlockBodyIndices, UnusedBits::Zero);
         validate_bitflag_backwards_compat!(StoredBlockWithdrawals, UnusedBits::Zero);
         validate_bitflag_backwards_compat!(StoredBlockSlashed, UnusedBits::Zero);
+        validate_bitflag_backwards_compat!(StoredBlockBridgeRequests, UnusedBits::Zero);
         validate_bitflag_backwards_compat!(StorageHashingCheckpoint, UnusedBits::NotZero);
     }
 }

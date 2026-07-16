@@ -4,7 +4,10 @@ use alloy_consensus::{
     Block, BlockBody, BlockHeader, Header, TxReceipt, EMPTY_OMMER_ROOT_HASH,
 };
 use alloy_eips::{eip4895::Withdrawals, merge::BEACON_NONCE};
-use alloy_evm::{block::BlockExecutorFactory, eth::EthBlockExecutionCtx};
+use alloy_evm::{
+    block::BlockExecutorFactory,
+    eth::{spec::EthExecutorSpec, EthBlockExecutionCtx},
+};
 use alloy_primitives::{Bloom, B256};
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput, BlockExecutionError};
@@ -26,7 +29,10 @@ impl<ChainSpec> EthBlockAssembler<ChainSpec> {
     }
 }
 
-impl<ChainSpec: EthChainSpec + EthereumHardforks> EthBlockAssembler<ChainSpec> {
+// reth-v2.8.1 migration: 880ce24ad added `EthExecutorSpec` to the `BlockAssembler` impl, where
+// the body was built; upstream moved that body into this inherent method, so the bound (needed
+// for `is_bridge_active_at_timestamp`) is added here as well.
+impl<ChainSpec: EthChainSpec + EthereumHardforks + EthExecutorSpec> EthBlockAssembler<ChainSpec> {
     /// Assembles a block. Accepts optional precomputed transaction root, receipt root, and logs
     /// bloom.
     pub fn assemble_block<F>(
@@ -73,6 +79,21 @@ impl<ChainSpec: EthChainSpec + EthereumHardforks> EthBlockAssembler<ChainSpec> {
                 )
             }
         };
+
+        // 0G: seal the CL-forwarded bridge SSZ blob (if any) into the built block's body so
+        // the proposer's own stored block carries the same bytes every verifier will persist
+        // from the newPayload sidecar — and so any later replay of this block re-executes the
+        // park system call and re-emits the 0xf0 requests entry byte-identically. Fork-gated
+        // as belt-and-braces: pre-Bridge attributes can never carry a blob (FCU V4 is itself
+        // fork-gated), so pre-Bridge bodies stay `None` and their encoding is unchanged.
+        // `None` post-Bridge is still allowed here because locally-built pending blocks (RPC
+        // `pending` simulation) have no CL attributes; such blocks are never gossiped or
+        // validated network-side.
+        let bridge_requests = self
+            .chain_spec
+            .is_bridge_active_at_timestamp(timestamp)
+            .then(|| ctx.bridge_request_raw.as_deref().cloned())
+            .flatten();
 
         let withdrawals = self
             .chain_spec
@@ -137,9 +158,9 @@ impl<ChainSpec: EthChainSpec + EthereumHardforks> EthBlockAssembler<ChainSpec> {
             slot_number: ctx.slot_number,
         };
 
-        // reth-v2.8.1 migration: 6a4f950b1 added `slashed: None` to the body built in the
-        // `BlockAssembler::assemble_block` impl; upstream moved that body into this inherent
-        // `assemble_block`, which the trait impl now calls.
+        // reth-v2.8.1 migration: 6a4f950b1 added `slashed: None` and 880ce24ad `bridge_requests`
+        // to the body built in the `BlockAssembler::assemble_block` impl; upstream moved that
+        // body into this inherent `assemble_block`, which the trait impl now calls.
         Ok(Block {
             header,
             body: BlockBody {
@@ -147,6 +168,7 @@ impl<ChainSpec: EthChainSpec + EthereumHardforks> EthBlockAssembler<ChainSpec> {
                 ommers: Default::default(),
                 withdrawals,
                 slashed: None,
+                bridge_requests,
             },
         })
     }
@@ -159,7 +181,7 @@ where
         Transaction: SignedTransaction,
         Receipt: Receipt,
     >,
-    ChainSpec: EthChainSpec + EthereumHardforks,
+    ChainSpec: EthChainSpec + EthereumHardforks + EthExecutorSpec,
 {
     type Block = Block<F::Transaction>;
 

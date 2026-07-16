@@ -587,6 +587,7 @@ mod tests {
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
             slashed: None,
+            bridge_requests: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
@@ -642,12 +643,14 @@ mod tests {
             ..Default::default()
         };
         // reth-v2.8.1 migration: upstream added this test; 0G's alloy fork gives `BlockBody` a
-        // `slashed` field (6a4f950b1), so the literal sets it to `None`.
+        // `slashed` field (6a4f950b1) and a `bridge_requests` field (880ce24ad), so the literal
+        // sets both to `None`.
         let body = BlockBody {
             transactions: vec![transaction],
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
             slashed: None,
+            bridge_requests: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
@@ -680,6 +683,7 @@ mod tests {
             ommers: vec![],
             withdrawals: Some(Withdrawals::default()),
             slashed: None,
+            bridge_requests: None,
         };
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });

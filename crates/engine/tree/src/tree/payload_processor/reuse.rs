@@ -1326,6 +1326,10 @@ mod tests {
             // reth-v2.8.1 migration: 6a4f950b1's alloy-evm adds `slashed`; this fixture has
             // none.
             slashed: None,
+            // reth-v2.8.1 migration: 880ce24ad's alloy-evm adds `bridge_request` and
+            // `bridge_request_raw`; this fixture runs no bridge system call.
+            bridge_request: None,
+            bridge_request_raw: None,
             extra_data: Bytes::new(),
             tx_count_hint: None,
             slot_number: None,

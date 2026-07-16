@@ -12,8 +12,11 @@
 extern crate alloc;
 
 use alloc::{fmt::Debug, sync::Arc};
-use alloy_consensus::{constants::MAXIMUM_EXTRA_DATA_SIZE, EMPTY_OMMER_ROOT_HASH};
+use alloy_consensus::{
+    constants::MAXIMUM_EXTRA_DATA_SIZE, BlockHeader as _, EMPTY_OMMER_ROOT_HASH,
+};
 use alloy_eips::eip7840::BlobParams;
+use alloy_evm::eth::spec::EthExecutorSpec;
 use alloy_primitives::B256;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_consensus::{
@@ -112,7 +115,9 @@ impl<ChainSpec: EthChainSpec + EthereumHardforks> EthBeaconConsensus<ChainSpec> 
 
 impl<ChainSpec, N> FullConsensus<N> for EthBeaconConsensus<ChainSpec>
 where
-    ChainSpec: Send + EthChainSpec<Header = N::BlockHeader> + EthereumHardforks,
+    // reth-v2.8.1 migration: 880ce24ad added `EthExecutorSpec` to these bounds (the bridge check
+    // needs `is_bridge_active_at_timestamp`); upstream since dropped `Sync` and `Debug` here.
+    ChainSpec: Send + EthChainSpec<Header = N::BlockHeader> + EthereumHardforks + EthExecutorSpec,
     N: NodePrimitives,
 {
     fn validate_block_post_execution(
@@ -141,28 +146,77 @@ where
     }
 }
 
+impl<ChainSpec: EthChainSpec + EthereumHardforks + EthExecutorSpec> EthBeaconConsensus<ChainSpec> {
+    /// 0G: fork-gated structural rule for the body's bridge-requests blob.
+    ///
+    /// Bridge active at `timestamp` ⇒ the body must carry a blob of at least 4 bytes (the SSZ
+    /// empty-list encoding the CL emits even for zero messages); inactive ⇒ the body must not
+    /// carry one. Runs before execution, so a devp2p peer serving bodies with the field
+    /// stripped (which would silently skip the bridge system call on replay and diverge the
+    /// state root) or smuggled into pre-fork blocks is rejected at download time — matching
+    /// the pre-extension decoder, which rejected any 5-item body outright. Only presence and
+    /// minimum length are checkable here: the blob has no dedicated header root (its
+    /// commitment is `requests_hash`, verifiable only after execution regenerates the other
+    /// request types).
+    fn validate_bridge_requests_presence(
+        &self,
+        timestamp: u64,
+        bridge_requests: Option<&alloy_primitives::Bytes>,
+    ) -> Result<(), ConsensusError> {
+        if self.chain_spec.is_bridge_active_at_timestamp(timestamp) {
+            match bridge_requests {
+                Some(blob) if blob.len() >= 4 => Ok(()),
+                _ => Err(ConsensusError::BodyBridgeRequestsMissing),
+            }
+        } else if bridge_requests.is_some() {
+            Err(ConsensusError::BodyBridgeRequestsUnexpected)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl<B, ChainSpec> Consensus<B> for EthBeaconConsensus<ChainSpec>
 where
     B: Block,
-    ChainSpec: EthChainSpec<Header = B::Header> + EthereumHardforks,
+    // reth-v2.8.1 migration: 880ce24ad added `EthExecutorSpec`; upstream since dropped `Debug`,
+    // `Send` and `Sync` here.
+    ChainSpec: EthChainSpec<Header = B::Header> + EthereumHardforks + EthExecutorSpec,
 {
     fn validate_body_against_header(
         &self,
         body: &B::Body,
         header: &SealedHeader<B::Header>,
     ) -> Result<(), ConsensusError> {
+        self.validate_bridge_requests_presence(
+            header.timestamp(),
+            reth_primitives_traits::BlockBody::bridge_requests(body),
+        )?;
         validate_body_against_header(body, header.header())
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
+        self.validate_bridge_requests_presence(
+            block.header().timestamp(),
+            reth_primitives_traits::BlockBody::bridge_requests(block.body()),
+        )?;
         validate_block_pre_execution(block, &self.chain_spec)
     }
 
+    // reth-v2.8.1 migration: 880ce24ad ran the bridge check in `validate_block_pre_execution`,
+    // which the engine's payload validator called. Upstream (#22489) made the payload validator
+    // call this method instead, and this impl goes straight to the common validation without
+    // `validate_block_pre_execution`, so the same check runs here too (same as the reth v2.4.1
+    // migration).
     fn validate_block_pre_execution_with_tx_root(
         &self,
         block: &SealedBlock<B>,
         transaction_root: Option<TransactionRoot>,
     ) -> Result<(), ConsensusError> {
+        self.validate_bridge_requests_presence(
+            block.header().timestamp(),
+            reth_primitives_traits::BlockBody::bridge_requests(block.body()),
+        )?;
         validate_block_pre_execution_with_tx_root(block, &self.chain_spec, transaction_root)
     }
 }
@@ -613,6 +667,45 @@ mod tests {
             )
             .unwrap_err(),
             ConsensusError::BlockAccessListHashMissing
+        ));
+    }
+
+    /// Fork-gated presence rule for the body's bridge-requests blob: bridge active ⇒ body must
+    /// carry a blob of >= 4 bytes; inactive ⇒ body must not carry one. Locks both directions
+    /// plus the minimum-length rejection.
+    #[test]
+    fn bridge_requests_presence_rule() {
+        fn spec(bridge_active: bool) -> Arc<ChainSpec> {
+            let mut spec =
+                ChainSpecBuilder::mainnet().shanghai_activated().prague_activated().build();
+            spec.bridge_activation_time = if bridge_active { 1 } else { 0 };
+            Arc::new(spec)
+        }
+        let active = EthBeaconConsensus::new(spec(true));
+        let inactive = EthBeaconConsensus::new(spec(false));
+        let blob = alloy_primitives::Bytes::from_static(&[0x04, 0x00, 0x00, 0x00]);
+        let short = alloy_primitives::Bytes::from_static(&[0x04]);
+
+        // reth-v2.8.1 migration: 880ce24ad compared with `assert_eq!` on
+        // `Result<(), ConsensusError>`; `ConsensusError` no longer implements `PartialEq`, so the
+        // same checks use `matches!`.
+
+        // active: Some(>=4B) ok; None / too-short rejected
+        assert!(matches!(active.validate_bridge_requests_presence(100, Some(&blob)), Ok(())));
+        assert!(matches!(
+            active.validate_bridge_requests_presence(100, None),
+            Err(ConsensusError::BodyBridgeRequestsMissing)
+        ));
+        assert!(matches!(
+            active.validate_bridge_requests_presence(100, Some(&short)),
+            Err(ConsensusError::BodyBridgeRequestsMissing)
+        ));
+
+        // inactive: None ok; Some rejected
+        assert!(matches!(inactive.validate_bridge_requests_presence(100, None), Ok(())));
+        assert!(matches!(
+            inactive.validate_bridge_requests_presence(100, Some(&blob)),
+            Err(ConsensusError::BodyBridgeRequestsUnexpected)
         ));
     }
 }

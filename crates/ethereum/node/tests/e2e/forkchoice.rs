@@ -376,7 +376,9 @@ async fn advance_block_ignores_foreign_payload_jobs() -> eyre::Result<()> {
     let updated = EngineApiClient::<EthEngineTypes>::fork_choice_updated_v3(
         &engine,
         ForkchoiceState::same_hash(genesis),
-        Some(attributes),
+        // reth-v2.8.1 migration: upstream test; 880ce24ad made `EthEngineTypes`' attributes 0G's
+        // `EthPayloadAttributes` wrapper, so alloy's attributes are wrapped with no bridge blob.
+        Some(attributes.into()),
     )
     .await?;
     assert!(updated.payload_id.is_some());

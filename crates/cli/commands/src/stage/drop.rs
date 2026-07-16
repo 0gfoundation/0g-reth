@@ -123,6 +123,7 @@ impl<C: ChainSpecParser> Command<C> {
                 tx.clear::<tables::BlockOmmers<HeaderTy<N>>>()?;
                 tx.clear::<tables::BlockWithdrawals>()?;
                 tx.clear::<tables::BlockSlashed>()?;
+                tx.clear::<tables::BlockBridgeRequests>()?;
                 reset_stage_checkpoint(tx, StageId::Bodies)?;
 
                 insert_genesis_header(&provider_rw, &self.env.chain)?;

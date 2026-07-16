@@ -105,7 +105,8 @@ async fn test_testsuite_assert_mine_block() -> Result<()> {
                 parent_beacon_block_root: None,
                 slot_number: None,
                 ..Default::default()
-            },
+            }
+            .into(),
         ));
 
     test.run::<EthereumNode>().await?;
@@ -303,9 +304,14 @@ async fn test_setup_builder_with_attributes_generator() -> Result<()> {
     let (mut node, _) = E2ETestSetupBuilder::<EthereumNode>::new_with_attributes_generator(
         1,
         chain_spec,
-        move |timestamp| PayloadAttributes {
-            suggested_fee_recipient: fee_recipient,
-            ..eth_payload_attributes(&attributes_chain_spec, timestamp)
+        // reth-v2.8.1 migration: upstream test; 880ce24ad made `EthEngineTypes`' attributes 0G's
+        // `EthPayloadAttributes` wrapper, so alloy's attributes are wrapped with no bridge blob.
+        move |timestamp| {
+            PayloadAttributes {
+                suggested_fee_recipient: fee_recipient,
+                ..eth_payload_attributes(&attributes_chain_spec, timestamp)
+            }
+            .into()
         },
     )
     .build_single()

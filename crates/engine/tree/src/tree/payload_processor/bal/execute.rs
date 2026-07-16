@@ -446,10 +446,16 @@ mod tests {
         };
         let block = Block {
             header,
+            // reth-v2.8.1 migration: upstream test; 0G's alloy fork gives `BlockBody` a `slashed`
+            // field (6a4f950b1) and a `bridge_requests` field (880ce24ad). The `slashed` gap was
+            // hidden until this object because `reth-e2e-test-utils` (a dev-dependency) did not
+            // compile; both are `None` here.
             body: BlockBody {
                 transactions: vec![],
                 ommers: vec![],
                 withdrawals: Some(vec![].into()),
+                slashed: None,
+                bridge_requests: None,
             },
         };
         block.seal_slow()

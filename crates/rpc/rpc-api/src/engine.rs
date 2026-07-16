@@ -146,6 +146,13 @@ pub trait EngineApi<Engine: EngineTypes> {
     /// `slotNumber` field in the `payloadAttributes`, if payload attributes
     /// are provided.
     ///
+    /// 0G: on Bridge-enabled chains the payload attributes also carry the `bridgeRequests` SSZ
+    /// blob (CL → EL) used to drive the bridge inbound system call. Method-version is gated by
+    /// `is_bridge_active_at_timestamp`: V3 rejects with `Unsupported fork` when bridge is active
+    /// at the attributes' timestamp; V4 rejects when bridge is inactive. The EL emits the blob
+    /// back as a `0xf0` `executionRequests` entry (the type byte sits in the private 0G
+    /// namespace `0xf0..=0xfe`).
+    ///
     /// `custody_columns` maps to the third positional JSON-RPC parameter, `custodyColumns`,
     /// the custody-column bitmask used for [EIP-8070] sparse blobpool signaling. It is
     /// `DATA|null` and must be 16 bytes when set. When calling `engine_forkchoiceUpdatedV4`
@@ -163,6 +170,12 @@ pub trait EngineApi<Engine: EngineTypes> {
         payload_attributes: Option<Engine::PayloadAttributes>,
         custody_columns: Option<B128>,
     ) -> RpcResult<ForkchoiceUpdated>;
+    // reth-v2.8.1 migration: 880ce24ad added its own two-parameter `forkchoiceUpdatedV4` for the
+    // Bridge fork. Upstream now defines the Amsterdam `forkchoiceUpdatedV4` above under the same
+    // method name, with an optional third `custodyColumns` parameter, so 0G's method is merged
+    // into it (its doc text is above): a two-parameter call from the 0G CL still matches, the
+    // Bridge payload attributes travel in `payload_attributes`, and the Bridge version gate stays
+    // in the engine validator.
 
     /// Post Bogota forkchoice update stub.
     ///
