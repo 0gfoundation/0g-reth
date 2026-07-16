@@ -60,6 +60,55 @@ pub mod execute {
     pub type EthExecutorProvider = EthEvmConfig;
 }
 
+/// 0G: decode a CL-emitted `BridgeRequests` SSZ blob into ABI calldata for
+/// `Bridge.parkRemoteMessages(InboundMessage[])`, stamping `fee_recipient` onto every message.
+///
+/// Shared by all three execution-context constructors so build (`context_for_next_block`),
+/// verify (`context_for_payload`) and replay (`context_for_block`) produce byte-identical
+/// calldata from the same blob: `fee_recipient` is the block coinbase on every path
+/// (`attrs.suggested_fee_recipient` is sealed into `header.beneficiary`, which is what
+/// `payload.fee_recipient()` and `header.beneficiary()` read back).
+///
+/// Decoding errors degrade to `None` (system call skipped) — a malformed blob would already
+/// have failed CL-side payload validation upstream, and treating it as a hard error here would
+/// prevent the EL from making progress at all.
+fn bridge_calldata_from_ssz(
+    chain_id: u64,
+    raw: &[u8],
+    fee_recipient: alloy_primitives::Address,
+    path: &'static str,
+) -> Option<Bytes> {
+    match reth_0g_bridge::decode_bridge_messages(raw) {
+        Ok(msgs) => {
+            let cd = reth_0g_bridge::encode_park_remote_messages_calldata(
+                &msgs,
+                chain_id,
+                fee_recipient,
+            );
+            tracing::debug!(
+                target: "0g::evm::bridge",
+                ssz_len = raw.len(),
+                msg_count = msgs.len(),
+                calldata_len = cd.len(),
+                ?fee_recipient,
+                path,
+                "decoded bridge SSZ to parkRemoteMessages calldata"
+            );
+            Some(cd)
+        }
+        Err(err) => {
+            tracing::warn!(
+                target: "0g::evm::bridge",
+                ?err,
+                ssz_len = raw.len(),
+                path,
+                "failed to decode bridge SSZ blob — system call will be skipped"
+            );
+            None
+        }
+    }
+}
+
 mod build;
 pub use build::EthBlockAssembler;
 
@@ -266,6 +315,29 @@ where
     }
 
     fn context_for_block<'a>(&self, block: &'a SealedBlock<Block>) -> EthBlockExecutionCtx<'a> {
+        // 0G: replay (pipeline `ExecutionStage`, engine-tree downloaded blocks,
+        // `reth stage run` / `re-execute`, ExEx backfill) sources the CL-determined bridge
+        // blob from the block body, where the build path (`EthBlockAssembler`) and the verify
+        // path (`ensure_well_formed_payload`) sealed it verbatim. This is what lets a node
+        // that never saw the CL's newPayload — e.g. a devp2p-backfilling follower — execute
+        // `parkRemoteMessages` and re-emit the 0xf0 requests entry byte-identically, so its
+        // post-state root matches the sealed header. Pre-Bridge blocks carry `None` and this
+        // reduces to the historical no-op behavior.
+        //
+        // `fee_recipient` is `header.beneficiary()`: byte-equal to the build path's
+        // `attrs.suggested_fee_recipient` (the proposer sealed that address into the header
+        // coinbase) and the verify path's `payload.fee_recipient()`.
+        let bridge_request = block.body().bridge_requests.as_ref().and_then(|raw| {
+            bridge_calldata_from_ssz(
+                self.chain_spec().chain().id(),
+                raw,
+                block.header().beneficiary(),
+                "context_for_block (replay)",
+            )
+            .map(Cow::Owned)
+        });
+        let bridge_request_raw = block.body().bridge_requests.as_ref().map(Cow::Borrowed);
+
         EthBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
@@ -273,6 +345,8 @@ where
             withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
             slashed: block.body().slashed.as_ref().map(Cow::Borrowed),
             timestamp: block.header().timestamp(),
+            bridge_request,
+            bridge_request_raw,
         }
     }
 
@@ -281,6 +355,47 @@ where
         parent: &SealedHeader,
         attributes: Self::NextBlockEnvCtx,
     ) -> EthBlockExecutionCtx<'_> {
+        // 0G: decode the SSZ `BridgeRequests` blob the CL forwarded via
+        // `engine_forkchoiceUpdatedV4.payloadAttributes.bridgeRequests` and re-encode it as
+        // ABI calldata for `Bridge.parkRemoteMessages(InboundMessage[])`. Fork-activation
+        // and bridge-address gating happen inside
+        // `system_calls::bridge::transact_bridge_contract_call`; if either is closed, the
+        // calldata is computed but never executed (still cheap — a few KB encode).
+        // Decoding errors degrade to `None` (no system call); a malformed blob would have
+        // failed CL-side payload validation upstream, but treating it as a build-time hard
+        // error would prevent the EL from making any progress at all.
+        // 0G bridge fee path: the same address that the EVM will use as `block.coinbase` —
+        // post-MinerReward fork, CL writes `withdrawals[0].Address` (proposer's withdrawal
+        // address) into `attrs.suggested_fee_recipient`. We thread this into every
+        // `InboundMessage.feeRecipient` so the dest-chain Bridge can pay the per-message fee
+        // to the dest-block proposer. The verifier path in `context_for_payload` sources the
+        // identical address from `payload.beneficiary` (the block-header coinbase), giving
+        // build/verify byte-equal calldata.
+        let fee_recipient = attributes.suggested_fee_recipient;
+        let bridge_calldata = attributes.bridge_request.as_ref().and_then(|raw| {
+            bridge_calldata_from_ssz(
+                self.chain_spec().chain().id(),
+                raw,
+                fee_recipient,
+                "context_for_next_block (build)",
+            )
+            .map(Cow::Owned)
+        });
+
+        // 0G: Forward the original SSZ blob unchanged so `EthBlockExecutor::finish` can append
+        // it as the `0xf0` entry of the EIP-7685 requests list. This is what makes the proposer-
+        // built sealed `block.header.requests_hash` cover the bridge entry — a precondition for
+        // the CL's re-assembled block hash to match `payload.block_hash`. The bytes pass through
+        // verbatim (no decode → re-encode) so proposer and verifier emit byte-equal
+        // `executionRequests` lists.
+        let bridge_request_raw = attributes.bridge_request.clone().map(Cow::Owned);
+        tracing::debug!(
+            target: "0g::evm::bridge",
+            has_calldata = bridge_calldata.is_some(),
+            has_raw = bridge_request_raw.is_some(),
+            "context_for_next_block: bridge ctx populated"
+        );
+
         EthBlockExecutionCtx {
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
@@ -288,6 +403,8 @@ where
             withdrawals: attributes.withdrawals.map(Cow::Owned),
             slashed: None,
             timestamp: attributes.timestamp,
+            bridge_request: bridge_calldata,
+            bridge_request_raw,
         }
     }
 }
@@ -355,6 +472,57 @@ where
     }
 
     fn context_for_payload<'a>(&self, payload: &'a ExecutionData) -> ExecutionCtxFor<'a, Self> {
+        // 0G bridge: extract the EIP-7685 type-`0xf0` entry, if any, and produce ABI calldata
+        // for `Bridge.parkRemoteMessages`. We do NOT enforce fork-activation here — the
+        // actual gating happens inside `system_calls::bridge::transact_bridge_contract_call`,
+        // which checks `is_bridge_active_at_timestamp` and `bridge_contract_address`.
+        // Decoding errors from CL-emitted bytes degrade to `None` (no system call); a
+        // misbehaving CL would already have failed payload validation upstream.
+        // Locate the `0xf0` entry once and reuse for both fields below.
+        let sidecar_requests_count = payload.sidecar.requests().map_or(0, |r| r.iter().count());
+        // Keep the full `&Bytes` entry (incl. type byte) so the raw field below is a zero-copy
+        // refcounted slice rather than a fresh allocation; strip the type byte per use.
+        let bridge_entry: Option<&Bytes> = payload
+            .sidecar
+            .requests()
+            .and_then(|reqs| reth_0g_bridge::find_bridge_entry(reqs.iter()));
+
+        // 0G bridge fee path: source the dest-block coinbase from the payload's fee_recipient
+        // (== block-header `beneficiary` post-merge). This is byte-equal to the build path's
+        // `attrs.suggested_fee_recipient` because the proposer pinned that address into the
+        // header it sealed, and we don't recompute it here. Calldata produced on this path
+        // matches the proposer's calldata byte-for-byte.
+        let fee_recipient = payload.payload.fee_recipient();
+        let bridge_calldata: Option<Cow<'a, Bytes>> = bridge_entry
+            .map(|entry| &entry[1..])
+            .and_then(|raw| {
+                bridge_calldata_from_ssz(
+                    self.chain_spec().chain().id(),
+                    raw,
+                    fee_recipient,
+                    "context_for_payload (verify)",
+                )
+            })
+            .map(Cow::Owned);
+
+        // 0G: Carry the same raw SSZ bytes the CL emitted in the 0xf0 entry. On the verifier
+        // path `EthBlockExecutor::finish` re-pushes them so its returned `requests` matches
+        // the proposer-built sealed header's `requests_hash`. Bytes go through verbatim to
+        // preserve byte-equality between proposer and verifier `executionRequests` lists.
+        // Zero-copy: `Bytes::slice` is a refcounted view into the sidecar entry, not a memcpy of
+        // the (up to ~13 KB at the message cap) SSZ body on every newPayload.
+        let bridge_request_raw: Option<Cow<'a, Bytes>> =
+            bridge_entry.map(|entry| Cow::Owned(entry.slice(1..)));
+
+        tracing::debug!(
+            target: "0g::evm::bridge",
+            sidecar_requests_count,
+            has_bridge_entry = bridge_entry.is_some(),
+            has_calldata = bridge_calldata.is_some(),
+            has_raw = bridge_request_raw.is_some(),
+            "context_for_payload: bridge ctx populated"
+        );
+
         EthBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
@@ -366,6 +534,8 @@ where
                 .filter(|s| !s.is_empty())
                 .map(|s| Cow::Owned(s.to_vec().into())),
             timestamp: payload.payload.timestamp(),
+            bridge_request: bridge_calldata,
+            bridge_request_raw,
         }
     }
 

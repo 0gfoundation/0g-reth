@@ -28,19 +28,26 @@ where
     ChainSpec: Send + Sync + EthereumHardforks + 'static,
 {
     fn build(&self, timestamp: u64) -> EthPayloadAttributes {
-        EthPayloadAttributes {
-            timestamp,
-            prev_randao: B256::random(),
-            suggested_fee_recipient: Address::random(),
-            withdrawals: self
-                .chain_spec
-                .is_shanghai_active_at_timestamp(timestamp)
-                .then(Default::default),
-            parent_beacon_block_root: self
-                .chain_spec
-                .is_cancun_active_at_timestamp(timestamp)
-                .then(B256::random),
-        }
+        EthPayloadAttributes::new(
+            alloy_rpc_types_engine::PayloadAttributes {
+                timestamp,
+                prev_randao: B256::random(),
+                suggested_fee_recipient: Address::random(),
+                withdrawals: self
+                    .chain_spec
+                    .is_shanghai_active_at_timestamp(timestamp)
+                    .then(Default::default),
+                parent_beacon_block_root: self
+                    .chain_spec
+                    .is_cancun_active_at_timestamp(timestamp)
+                    .then(B256::random),
+            },
+            // Local mining (dev-only) does not poll a foreign EL for bridge messages.
+            // Post-Bridge-fork the EL validator will refuse the resulting V4 attrs because
+            // `bridge_requests` is `None`; production 0G nodes drive payload building from
+            // CometBFT (`engine_forkchoiceUpdatedV4` from CL), not from `LocalMiner`.
+            None,
+        )
     }
 }
 
@@ -51,8 +58,9 @@ where
     ChainSpec: Send + Sync + EthereumHardforks + 'static,
 {
     fn build(&self, timestamp: u64) -> op_alloy_rpc_types_engine::OpPayloadAttributes {
+        let eth: EthPayloadAttributes = self.build(timestamp);
         op_alloy_rpc_types_engine::OpPayloadAttributes {
-            payload_attributes: self.build(timestamp),
+            payload_attributes: eth.inner,
             // Add dummy system transaction
             transactions: Some(vec![
                 reth_optimism_chainspec::constants::TX_SET_L1_BLOCK_OP_MAINNET_BLOCK_124665056

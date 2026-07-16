@@ -28,7 +28,7 @@ use alloy_evm::{
     block::{BlockExecutorFactory, BlockExecutorFor},
     precompiles::PrecompilesMap,
 };
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, Bytes, B256};
 use core::{error::Error, fmt::Debug};
 use execute::{BasicBlockExecutor, BlockAssembler, BlockBuilder};
 use reth_execution_errors::BlockExecutionError;
@@ -121,6 +121,7 @@ pub use alloy_evm::block::state_changes as state_change;
 ///     gas_limit: 30_000_000,
 ///     withdrawals: Some(withdrawals),
 ///     parent_beacon_block_root: Some(beacon_root),
+///     bridge_request: None,
 /// };
 ///
 /// // Build a new block on top of parent
@@ -495,6 +496,14 @@ pub struct NextBlockEnvAttributes {
     pub parent_beacon_block_root: Option<B256>,
     /// Withdrawals
     pub withdrawals: Option<Withdrawals>,
+    /// 0G: SSZ-encoded `BridgeRequests` blob from the CL, carried on
+    /// `engine_forkchoiceUpdatedV4.payloadAttributes.bridgeRequests`.
+    ///
+    /// `Some(bytes)` post-Bridge-fork: empty bytes mean "no messages this block" (still a
+    /// non-null SSZ list). `None` pre-Bridge-fork. The EL passes the blob through unchanged
+    /// (no recompute) when emitting the `0xf0` entry on `engine_getPayloadV4` so the proposer
+    /// and the verifier see byte-identical executionRequests.
+    pub bridge_request: Option<Bytes>,
 }
 
 /// Abstraction over transaction environment.

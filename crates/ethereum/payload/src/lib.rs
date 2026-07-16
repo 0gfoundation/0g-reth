@@ -167,6 +167,11 @@ where
                 gas_limit: builder_config.gas_limit(parent_header.gas_limit),
                 parent_beacon_block_root: attributes.parent_beacon_block_root(),
                 withdrawals: Some(attributes.withdrawals().clone()),
+                // 0G: forward the SSZ blob the CL sent on `engine_forkchoiceUpdatedV4`. The
+                // EL config's `context_for_next_block` decodes this into ABI calldata for
+                // `Bridge.parkRemoteMessages` so the bridge system call fires inside
+                // `EthBlockExecutor::finish()` during local block building.
+                bridge_request: attributes.bridge_requests.clone(),
             },
         )
         .map_err(PayloadBuilderError::other)?;
@@ -381,6 +386,13 @@ where
 
     let BlockBuilderOutcome { execution_result, block, .. } = builder.finish(&state_provider)?;
 
+    // 0G: `execution_result.requests` already contains the `0xf0` bridge entry (if any) —
+    // `EthBlockExecutor::finish` appends it from `EthBlockExecutionCtx.bridge_request_raw`
+    // before `EthBlockAssembler::assemble_block` reads `requests` to compute `requests_hash`.
+    // That is the **only** correct place to push: doing it here, post-`builder.finish()`,
+    // would leave the sealed `block.header.requests_hash` covering only deposits/withdrawals/
+    // consolidations while the wire response includes 0xf0, and the CL's re-assembled block
+    // hash would diverge from `payload.block_hash`.
     let requests = chain_spec
         .is_prague_active_at_timestamp(attributes.timestamp)
         .then_some(execution_result.requests);

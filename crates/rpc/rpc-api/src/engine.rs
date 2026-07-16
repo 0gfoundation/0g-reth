@@ -113,6 +113,23 @@ pub trait EngineApi<Engine: EngineTypes> {
         payload_attributes: Option<Engine::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
+    /// Post-Bridge (0G) forkchoice update handler.
+    ///
+    /// Same as `forkchoiceUpdatedV3` but the payload attributes carry an additional
+    /// `bridgeRequests` SSZ blob (CL → EL) used to drive the bridge inbound system call.
+    /// Method-version is gated by `is_bridge_active_at_timestamp`: V3 rejects with
+    /// `Unsupported fork` when bridge is active at the attributes' timestamp; V4 rejects
+    /// when bridge is inactive. Pre-Bridge nodes must continue to use V3. The new
+    /// `bridgeRequests` payload-attribute field carries the SSZ-encoded `BridgeRequests`
+    /// blob; the EL emits it back as a `0xf0` `executionRequests` entry (the type byte sits
+    /// in the private 0G namespace `0xf0..=0xfe`).
+    #[method(name = "forkchoiceUpdatedV4")]
+    async fn fork_choice_updated_v4(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<Engine::PayloadAttributes>,
+    ) -> RpcResult<ForkchoiceUpdated>;
+
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/paris.md#engine_getpayloadv1>
     ///
     /// Returns the most recent version of the payload that is available in the corresponding
