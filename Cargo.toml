@@ -723,17 +723,17 @@ vergen-git2 = "=1.0.5"
 # whose API matches this revm.
 # NOTE: this single top-level [patch.crates-io] revm also overrides alloy-evm's crates.io `revm` dep,
 # so the whole graph resolves to ONE revm at this rev.
-revm = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece" }
-revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "revm-bytecode" }
-revm-database = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "revm-database" }
-revm-state = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "revm-state" }
-revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "revm-primitives" }
-revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "revm-interpreter" }
-revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "revm-inspector" }
-revm-context = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "revm-context" }
-revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "revm-context-interface" }
-revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "revm-database-interface" }
-op-revm = { git = "https://github.com/0gfoundation/revm", rev = "7a99649930a3b24b22e24ccd58d16e2cfcde0ece", package = "op-revm" }
+revm = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f" }
+revm-bytecode = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "revm-bytecode" }
+revm-database = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "revm-database" }
+revm-state = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "revm-state" }
+revm-primitives = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "revm-primitives" }
+revm-interpreter = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "revm-interpreter" }
+revm-inspector = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "revm-inspector" }
+revm-context = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "revm-context" }
+revm-context-interface = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "revm-context-interface" }
+revm-database-interface = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "revm-database-interface" }
+op-revm = { git = "https://github.com/0gfoundation/revm", rev = "e77aed0d9baf6cd3ab824b48a62fdd3ff783dd3f", package = "op-revm" }
 
 alloy-evm = { git = "https://github.com/0gfoundation/alloy-evm", rev = "06cbe7b7600885e51a5246d995b410cabaae718d", package = "alloy-evm" }
 
