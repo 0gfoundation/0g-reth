@@ -730,3 +730,143 @@ mod tests {
         }
     }
 }
+
+/// R1 parallel-recovery differential tests (0g-reth commit 7a181aef).
+///
+/// The delayed-execution payload path switched from lazy per-tx `try_recover()` to
+/// `recover_signers(&txs)` (parallel under the node's `reth-primitives-traits/rayon` feature)
+/// followed by a positional `zip(txs, signers)`. Correctness hinges on TWO properties that a
+/// "tx dependencies break this" suspicion reduces to:
+///   1. `recover_signers` returns senders in the SAME positional order as the input (else the
+///      `zip` pairs tx[i] with the wrong sender → wrong nonce/balance → wrong state root);
+///   2. `recover_signers` performs the IDENTICAL recovery as `try_recover()` — same
+///      `recover_signer()` (EIP-2 low-s *checked*), not the unchecked variant.
+/// Execution ordering is unchanged (the executor still consumes the recovered Vec in order), so
+/// inter-tx state dependencies are unaffected — recovery is pure per-tx secp256k1.
+///
+/// Run the production (parallel) path with:
+///   cargo test -p reth-ethereum-primitives --features reth-primitives-traits/rayon r1_recover
+#[cfg(test)]
+mod r1_recover_diff_tests {
+    use super::*;
+    use reth_primitives_traits::{
+        crypto::secp256k1::sign_message, transaction::recover::recover_signers,
+    };
+
+    fn random_secret() -> B256 {
+        let secp = secp256k1::Secp256k1::new();
+        let kp = secp256k1::Keypair::new(&secp, &mut rand_08::thread_rng());
+        B256::from_slice(&kp.secret_bytes()[..])
+    }
+
+    fn signed_legacy(nonce: u64, secret: B256) -> TransactionSigned {
+        let tx = Transaction::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce,
+            gas_price: 1_000_000_000u128,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        });
+        let sig = sign_message(secret, tx.signature_hash()).unwrap();
+        TransactionSigned { transaction: tx, signature: sig, hash: Default::default() }
+    }
+
+    /// 500 txs from 500 DISTINCT random signers: the parallel `recover_signers` must equal the
+    /// sequential per-tx `try_recover()` element-for-element. A rayon reorder / non-indexed
+    /// collect would permute the output and fail `assert_eq`. (With enough txs rayon actually
+    /// splits the work across the pool, so this exercises the real parallel path.)
+    #[test]
+    fn r1_recover_signers_matches_per_tx_try_recover_in_order() {
+        let n = 500usize;
+        let txs: Vec<TransactionSigned> =
+            (0..n).map(|i| signed_legacy(i as u64, random_secret())).collect();
+
+        // Old path: sequential, positionally exact by construction.
+        let old: Vec<Address> = txs.iter().map(|t| t.try_recover().unwrap()).collect();
+        // New path: recover_signers (parallel under the rayon feature).
+        let new = recover_signers(&txs).expect("all signatures valid");
+
+        assert_eq!(new.len(), n);
+        assert_eq!(
+            new, old,
+            "recover_signers must be positionally identical to per-tx try_recover"
+        );
+        // 500 distinct keys => 500 distinct senders: catches any silent dedup / drop / reuse.
+        let mut uniq = new.clone();
+        uniq.sort();
+        uniq.dedup();
+        assert_eq!(uniq.len(), n, "all recovered senders must be distinct");
+    }
+
+    /// One invalid-signature tx anywhere in the batch → `recover_signers` rejects the WHOLE batch
+    /// (all-or-nothing), matching the old per-tx short-circuit's verdict (the block is rejected
+    /// wholesale either way, so nothing is committed).
+    #[test]
+    fn r1_invalid_signature_rejects_whole_batch() {
+        let mut txs: Vec<TransactionSigned> =
+            (0..8u64).map(|i| signed_legacy(i, random_secret())).collect();
+        // r = 0 is not a valid ecrecover input → recovery errors.
+        txs[4].signature = Signature::new(U256::ZERO, U256::from(1u64), false);
+
+        assert!(txs[4].try_recover().is_err(), "old path errors on the bad tx");
+        assert!(recover_signers(&txs).is_err(), "recover_signers rejects the whole batch");
+    }
+
+    /// Directly targets the "txs have dependencies" suspicion: 3 senders each submit 3
+    /// nonce-ordered txs, INTERLEAVED in the block (A,B,C,A,B,C,A,B,C). Parallel recovery must
+    /// return each tx's true sender at its exact position, so the executor (which consumes the
+    /// recovered Vec in order) still sees each sender's nonces 0,1,2 in order. A positional
+    /// reorder would put a wrong sender at some slot → the dependent nonce chain would break.
+    #[test]
+    fn r1_interleaved_same_sender_nonce_chains_recover_in_position() {
+        let sa = random_secret();
+        let sb = random_secret();
+        let sc = random_secret();
+        let addr = |s: B256| signed_legacy(0, s).try_recover().unwrap();
+        let (a, b, c) = (addr(sa), addr(sb), addr(sc));
+
+        // Interleaved: positions 0..9 = A0,B0,C0,A1,B1,C1,A2,B2,C2 (each sender's nonces ordered).
+        let secrets = [sa, sb, sc];
+        let txs: Vec<TransactionSigned> = (0..9)
+            .map(|i| signed_legacy((i / 3) as u64, secrets[i % 3]))
+            .collect();
+
+        let expected = vec![a, b, c, a, b, c, a, b, c];
+        let recovered = recover_signers(&txs).unwrap();
+        assert_eq!(recovered, expected, "each interleaved dependent tx must recover its own sender at its position");
+        // and identical to the old per-tx path
+        let old: Vec<Address> = txs.iter().map(|t| t.try_recover().unwrap()).collect();
+        assert_eq!(recovered, old);
+    }
+
+    /// EIP-2 low-s: a high-s (malleable) signature must be REJECTED by `recover_signers`, proving
+    /// it calls the CHECKED `recover_signer()` — exactly what `try_recover()` calls. If the R1
+    /// change had used `recover_signers_unchecked`, this high-s tx would recover `Ok` (a valid
+    /// sender) while the old path rejected it → a consensus split. This test would then fail.
+    #[test]
+    fn r1_recover_signers_enforces_checked_low_s() {
+        let valid = signed_legacy(0, random_secret());
+        // secp256k1 group order N.
+        let order = U256::from_be_bytes(alloy_primitives::hex!(
+            "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
+        ));
+        // sign_message produces low-s (s <= N/2); its malleable twin (N - s, flipped parity) is
+        // high-s and must be rejected by the checked recovery.
+        let high_s = order - valid.signature.s();
+        let malleable = Signature::new(valid.signature.r(), high_s, !valid.signature.v());
+        let tx = TransactionSigned {
+            transaction: valid.transaction.clone(),
+            signature: malleable,
+            hash: Default::default(),
+        };
+
+        assert!(tx.try_recover().is_err(), "checked try_recover rejects high-s (EIP-2)");
+        let batch = vec![tx];
+        assert!(
+            recover_signers(&batch).is_err(),
+            "recover_signers must ALSO reject high-s — proves it is the CHECKED variant"
+        );
+    }
+}
