@@ -250,7 +250,13 @@ pub fn random_block<R: Rng>(
 
     Block {
         header,
-        body: BlockBody { transactions, ommers, withdrawals: withdrawals.map(Withdrawals::new) },
+        body: BlockBody {
+            transactions,
+            ommers,
+            withdrawals: withdrawals.map(Withdrawals::new),
+            slashed: None,
+            bridge_requests: None,
+        },
     }
     .seal_slow()
 }

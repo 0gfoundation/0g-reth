@@ -411,6 +411,8 @@ mod tests {
                         },
                     ],
                     withdrawals: None,
+                    slashed: None,
+                    bridge_requests: None,
                 }
             ]),
         };
@@ -488,6 +490,8 @@ mod tests {
                         },
                     ],
                     withdrawals: None,
+                    slashed: None,
+                    bridge_requests: None,
                 }
             ]),
         };

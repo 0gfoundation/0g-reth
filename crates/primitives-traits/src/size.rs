@@ -100,7 +100,13 @@ impl<T: InMemorySize, H: InMemorySize> InMemorySize for alloy_consensus::BlockBo
             self.ommers.capacity() * core::mem::size_of::<Header>() +
             self.withdrawals
                 .as_ref()
-                .map_or(core::mem::size_of::<Option<Withdrawals>>(), Withdrawals::total_size)
+                .map_or(core::mem::size_of::<Option<Withdrawals>>(), Withdrawals::total_size) +
+            self.slashed
+                .as_ref()
+                .map_or(core::mem::size_of::<Option<Withdrawals>>(), Withdrawals::total_size) +
+            self.bridge_requests
+                .as_ref()
+                .map_or(core::mem::size_of::<Option<alloy_primitives::Bytes>>(), |b| b.len())
     }
 }
 

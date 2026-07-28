@@ -26,7 +26,7 @@ pub use blocks::*;
 pub use integer_list::IntegerList;
 pub use reth_db_models::{
     AccountBeforeTx, ClientVersion, StaticFileBlockWithdrawals, StoredBlockBodyIndices,
-    StoredBlockWithdrawals,
+    StoredBlockBridgeRequests, StoredBlockSlashed, StoredBlockWithdrawals,
 };
 pub use sharded_key::ShardedKey;
 
@@ -225,6 +225,8 @@ impl_compression_for_compact!(
     StoredBlockBodyIndices,
     StoredBlockOmmers<H>,
     StoredBlockWithdrawals,
+    StoredBlockSlashed,
+    StoredBlockBridgeRequests,
     StaticFileBlockWithdrawals,
     Bytecode,
     AccountBeforeTx,
@@ -348,6 +350,8 @@ mod tests {
         assert_eq!(StageUnitCheckpoint::bitflag_encoded_bytes(), 1);
         assert_eq!(StoredBlockBodyIndices::bitflag_encoded_bytes(), 1);
         assert_eq!(StoredBlockWithdrawals::bitflag_encoded_bytes(), 0);
+        assert_eq!(StoredBlockSlashed::bitflag_encoded_bytes(), 0);
+        assert_eq!(StoredBlockBridgeRequests::bitflag_encoded_bytes(), 0);
         assert_eq!(StorageHashingCheckpoint::bitflag_encoded_bytes(), 1);
 
         validate_bitflag_backwards_compat!(Account, UnusedBits::NotZero);
@@ -368,6 +372,8 @@ mod tests {
         validate_bitflag_backwards_compat!(StageUnitCheckpoint, UnusedBits::Zero);
         validate_bitflag_backwards_compat!(StoredBlockBodyIndices, UnusedBits::Zero);
         validate_bitflag_backwards_compat!(StoredBlockWithdrawals, UnusedBits::Zero);
+        validate_bitflag_backwards_compat!(StoredBlockSlashed, UnusedBits::Zero);
+        validate_bitflag_backwards_compat!(StoredBlockBridgeRequests, UnusedBits::Zero);
         validate_bitflag_backwards_compat!(StorageHashingCheckpoint, UnusedBits::NotZero);
     }
 }

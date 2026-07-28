@@ -55,6 +55,10 @@ impl ExecutionPayload for CustomExecutionData {
         None
     }
 
+    fn slashed(&self) -> Option<&[alloy_eips::eip4895::Withdrawal]> {
+        None
+    }
+
     fn parent_beacon_block_root(&self) -> Option<revm_primitives::B256> {
         self.inner.parent_beacon_block_root()
     }

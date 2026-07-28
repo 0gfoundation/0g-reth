@@ -272,6 +272,19 @@ pub enum ConsensusError {
     #[error("missing withdrawals")]
     BodyWithdrawalsMissing,
 
+    /// 0G: the Bridge fork is active at the block timestamp but the body carries no
+    /// bridge-requests blob, or a blob shorter than the 4-byte SSZ empty-list minimum the CL
+    /// always emits. Post-Bridge blocks must carry the blob — replay cannot re-execute the
+    /// bridge system call without it.
+    #[error("post-Bridge block body is missing a valid bridge-requests blob")]
+    BodyBridgeRequestsMissing,
+
+    /// 0G: the Bridge fork is not active at the block timestamp but the body carries a
+    /// bridge-requests blob. Pre-Bridge bodies must encode byte-identically to the
+    /// pre-extension format, which forbids the field.
+    #[error("pre-Bridge block body carries an unexpected bridge-requests blob")]
+    BodyBridgeRequestsUnexpected,
+
     /// Error when requests are missing.
     #[error("missing requests")]
     BodyRequestsMissing,

@@ -4,7 +4,10 @@ use alloy_consensus::{
     Block, BlockBody, BlockHeader, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH,
 };
 use alloy_eips::merge::BEACON_NONCE;
-use alloy_evm::{block::BlockExecutorFactory, eth::EthBlockExecutionCtx};
+use alloy_evm::{
+    block::BlockExecutorFactory,
+    eth::{spec::EthExecutorSpec, EthBlockExecutionCtx},
+};
 use alloy_primitives::Bytes;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput, BlockExecutionError};
@@ -34,7 +37,7 @@ where
         Transaction: SignedTransaction,
         Receipt: Receipt,
     >,
-    ChainSpec: EthChainSpec + EthereumHardforks,
+    ChainSpec: EthChainSpec + EthereumHardforks + EthExecutorSpec,
 {
     type Block = Block<F::Transaction>;
 
@@ -59,6 +62,21 @@ where
             &receipts.iter().map(|r| r.with_bloom_ref()).collect::<Vec<_>>(),
         );
         let logs_bloom = logs_bloom(receipts.iter().flat_map(|r| r.logs()));
+
+        // 0G: seal the CL-forwarded bridge SSZ blob (if any) into the built block's body so
+        // the proposer's own stored block carries the same bytes every verifier will persist
+        // from the newPayload sidecar — and so any later replay of this block re-executes the
+        // park system call and re-emits the 0xf0 requests entry byte-identically. Fork-gated
+        // as belt-and-braces: pre-Bridge attributes can never carry a blob (FCU V4 is itself
+        // fork-gated), so pre-Bridge bodies stay `None` and their encoding is unchanged.
+        // `None` post-Bridge is still allowed here because locally-built pending blocks (RPC
+        // `pending` simulation) have no CL attributes; such blocks are never gossiped or
+        // validated network-side.
+        let bridge_requests = self
+            .chain_spec
+            .is_bridge_active_at_timestamp(timestamp)
+            .then(|| ctx.bridge_request_raw.as_deref().cloned())
+            .flatten();
 
         let withdrawals = self
             .chain_spec
@@ -119,7 +137,13 @@ where
 
         Ok(Block {
             header,
-            body: BlockBody { transactions, ommers: Default::default(), withdrawals },
+            body: BlockBody {
+                transactions,
+                ommers: Default::default(),
+                withdrawals,
+                slashed: None,
+                bridge_requests,
+            },
         })
     }
 }

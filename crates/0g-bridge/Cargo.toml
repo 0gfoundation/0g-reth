@@ -1,0 +1,34 @@
+[package]
+name = "reth-0g-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "0G cross-chain bridge: EIP-7685 type 0xf0 SSZ decode + ABI encode for the EL"
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-sol-types.workspace = true
+
+ethereum_ssz.workspace = true
+ethereum_ssz_derive.workspace = true
+
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+alloy-primitives = { workspace = true, features = ["serde", "rand"] }
+
+[features]
+default = ["std"]
+std = [
+    "alloy-primitives/std",
+    "alloy-sol-types/std",
+    "thiserror/std",
+    "tracing/std"
+]

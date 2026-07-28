@@ -1,5 +1,5 @@
 use alloy_eips::eip4895::Withdrawals;
-use alloy_primitives::TxNumber;
+use alloy_primitives::{Bytes, TxNumber};
 use core::ops::Range;
 
 /// Total number of transactions.
@@ -75,6 +75,32 @@ impl StoredBlockBodyIndices {
 pub struct StoredBlockWithdrawals {
     /// The block withdrawals.
     pub withdrawals: Withdrawals,
+}
+
+/// The storage representation of slashed validator entries.
+#[derive(Debug, Default, Eq, PartialEq, Clone)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StoredBlockSlashed {
+    /// Slashed validator entries for the block.
+    pub slashed: Withdrawals,
+}
+
+/// The storage representation of the 0G bridge-requests blob (the block body's
+/// `bridge_requests` field: the CL-determined `BridgeRequests` SSZ bytes, stored verbatim so
+/// replay re-emits the EIP-7685 `0xf0` entry byte-identically). A row exists for every
+/// post-Bridge-fork block, including the 4-byte empty-list encoding; pre-Bridge blocks have no
+/// row.
+#[derive(Debug, Default, Eq, PartialEq, Clone)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StoredBlockBridgeRequests {
+    /// The verbatim bridge-requests SSZ blob for the block.
+    pub bridge_requests: Bytes,
 }
 
 /// A storage representation of block withdrawals that is static file friendly. An inner `None`
