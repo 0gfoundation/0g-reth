@@ -557,26 +557,43 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[path = "gas_alignment.rs"]
+    mod gas_alignment;
+
     use crate::{eth::helpers::types::EthRpcConverter, EthApi, EthApiBuilder};
     use alloy_consensus::{Block, BlockBody, Header};
     use alloy_eips::BlockNumberOrTag;
-    use alloy_primitives::{Signature, B256, U64};
+    use alloy_primitives::{Address, Bytes, Signature, TxKind, B256, U256, U64};
     use alloy_rpc_types::FeeHistory;
+    use alloy_rpc_types_eth::{state::StateOverride, TransactionInput, TransactionRequest};
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
     use reth_chain_state::CanonStateSubscriptions;
-    use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
+    use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec, MIN_TRANSACTION_GAS};
     use reth_ethereum_primitives::TransactionSigned;
+    use reth_evm::{EvmEnv, TransactionEnv};
     use reth_evm_ethereum::EthEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
-        test_utils::{MockEthProvider, NoopProvider},
+        test_utils::{ExtendedAccount, MockEthProvider, NoopProvider},
         StageCheckpointReader,
     };
-    use reth_rpc_eth_api::{node::RpcNodeCoreAdapter, EthApiServer};
+    use reth_revm::database::StateProviderDatabase;
+    use reth_rpc_eth_api::{
+        helpers::{estimate::EstimateCall, Call},
+        node::RpcNodeCoreAdapter,
+        EthApiServer,
+    };
+    use reth_rpc_eth_types::{EthApiError, RpcInvalidTransactionError};
+    use reth_rpc_server_types::constants::gas_oracle::ESTIMATE_GAS_ERROR_RATIO;
     use reth_storage_api::{BlockReader, BlockReaderIdExt, StateProviderFactory};
     use reth_testing_utils::generators;
     use reth_transaction_pool::test_utils::{testing_pool, TestPool};
+    use revm::{
+        context::{BlockEnv, CfgEnv},
+        context_interface::result::ExecutionResult,
+        primitives::hardfork::SpecId,
+    };
 
     type FakeEthApi<P = MockEthProvider> = EthApi<
         RpcNodeCoreAdapter<P, TestPool, NoopNetwork, EthEvmConfig>,
@@ -852,6 +869,354 @@ mod tests {
         assert!(
             fee_history.reward.is_none(),
             "all: no percentiles were requested, so there should be no rewards result"
+        );
+    }
+
+    /// Block cap used when the request omits gas. Matches the 36_000_000 cap the
+    /// inflated estimates were observed against.
+    const BLOCK_GAS_CAP: u64 = 36_000_000;
+    /// EOA + two nonzero calldata bytes is ~24k. 35k still rejects an ~40k result
+    /// from a 50k cap, which is the smallest inflated case in the matrix.
+    const EOA_CALLDATA_CEILING: u64 = 35_000;
+    /// Empty calldata into a small SSTORE is ~43k. Kept under the ~80k a 100k cap
+    /// would bill, and far under a 500k cap.
+    const CONTRACT_CALL_CEILING: u64 = 80_000;
+    /// CALL + storage-clear needs the 63/64 budget, still well under 200k.
+    /// A 500k cap bills ~400k, so this ceiling fails the unfixed search.
+    const REFUND_CALL_CEILING: u64 = 200_000;
+    /// Create intrinsic is 53_000. 120k accepts search slack and rejects ~160k
+    /// from a 200k cap.
+    const CREATION_INTRINSIC: u64 = 53_000;
+    const CREATION_CEILING: u64 = 120_000;
+    /// Fixed-limit fee check. 80_000 is the 80% floor of this limit, not an
+    /// estimate. Kept literal so a wrong floor percentage cannot hide in arithmetic.
+    const FIXED_BILLING_LIMIT: u64 = 100_000;
+    const FIXED_BILLING_USED: u64 = 80_000;
+
+    fn sender() -> Address {
+        Address::repeat_byte(0x11)
+    }
+
+    fn sender_account() -> ExtendedAccount {
+        ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64))
+    }
+
+    fn estimation_env(provider: &MockEthProvider, block_gas_limit: u64) -> EvmEnv {
+        let mut cfg_env = CfgEnv::new()
+            .with_chain_id(provider.chain_spec().chain().id())
+            .with_spec(SpecId::PRAGUE);
+        // Same flags `estimate_gas_with` sets, so replay is not rejected by base fee
+        // or EIP-3607 before it can check the returned limit.
+        cfg_env.disable_base_fee = true;
+        cfg_env.disable_eip3607 = true;
+        // Leave `tx_gas_limit_cap` unset so an omitted request gas uses the block cap.
+        EvmEnv {
+            cfg_env,
+            block_env: BlockEnv {
+                gas_limit: block_gas_limit,
+                basefee: 0,
+                number: U256::from(1),
+                ..Default::default()
+            },
+        }
+    }
+
+    fn call_request(to: Address, gas: Option<u64>, data: &'static [u8]) -> TransactionRequest {
+        TransactionRequest {
+            from: Some(sender()),
+            to: Some(TxKind::Call(to)),
+            gas,
+            input: TransactionInput { input: None, data: Some(Bytes::from_static(data)) },
+            ..Default::default()
+        }
+    }
+
+    fn create_request(gas: Option<u64>, init_code: &'static [u8]) -> TransactionRequest {
+        TransactionRequest {
+            from: Some(sender()),
+            to: None,
+            gas,
+            input: TransactionInput { input: None, data: Some(Bytes::from_static(init_code)) },
+            ..Default::default()
+        }
+    }
+
+    /// CALL `callee` with all remaining gas and revert unless that CALL succeeds.
+    ///
+    /// Replay then fails unless the limit covers the 63/64 transient budget, not
+    /// only the post-refund billed amount.
+    fn call_or_revert(callee: Address) -> Bytes {
+        let mut code = Vec::new();
+        for _ in 0..5 {
+            code.extend_from_slice(&[0x60, 0x00]);
+        }
+        code.push(0x73);
+        code.extend_from_slice(callee.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1, 0x15, 0x60]);
+        let dest_immediate = code.len();
+        code.extend_from_slice(&[0x00, 0x57, 0x00]);
+        let jumpdest = u8::try_from(code.len()).expect("call bytecode fits in PUSH1");
+        code.push(0x5b);
+        code[dest_immediate] = jumpdest;
+        code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0xfd]);
+        Bytes::from(code)
+    }
+
+    fn execute_gas_used(
+        eth_api: &FakeEthApi,
+        provider: &MockEthProvider,
+        evm_env: EvmEnv,
+        request: TransactionRequest,
+        gas_limit: u64,
+    ) -> u64 {
+        let db = StateProviderDatabase::new(provider.clone());
+        let mut tx_env = eth_api
+            .create_txn_env(&evm_env, request, db.clone())
+            .unwrap_or_else(|err| panic!("create_txn_env failed for gas limit {gas_limit}: {err}"));
+        tx_env.set_gas_limit(gas_limit);
+        let executed = eth_api
+            .transact(db, evm_env, tx_env)
+            .unwrap_or_else(|err| panic!("transact failed for gas limit {gas_limit}: {err}"));
+        match executed.result {
+            ExecutionResult::Success { gas_used, .. } => gas_used,
+            other => panic!("gas limit {gas_limit} did not re-execute successfully: {other:?}"),
+        }
+    }
+
+    fn estimate_and_replay(
+        provider: &MockEthProvider,
+        block_gas_limit: u64,
+        request: TransactionRequest,
+    ) -> u64 {
+        let eth_api = build_test_eth_api(provider.clone());
+        let evm_env = estimation_env(provider, block_gas_limit);
+        let estimate = EstimateCall::estimate_gas_with(
+            &eth_api,
+            evm_env.clone(),
+            request.clone(),
+            provider.clone(),
+            None::<StateOverride>,
+        )
+        .unwrap_or_else(|err| panic!("estimate_gas_with failed: {err}"));
+        let gas_limit = estimate.saturating_to::<u64>();
+        // Replay with the production EVM. Do not treat estimate-1 as required to
+        // fail: the search may stop inside the 1.5% window.
+        execute_gas_used(&eth_api, provider, evm_env, request, gas_limit);
+        gas_limit
+    }
+
+    fn assert_shared_band(cases: &[(String, u64)], floor: u64, ceiling: u64) {
+        assert!(!cases.is_empty(), "no estimates to compare");
+        let low = cases.iter().map(|(_, gas)| *gas).min().expect("non-empty");
+        let high = cases.iter().map(|(_, gas)| *gas).max().expect("non-empty");
+        for (label, gas) in cases {
+            assert!(
+                (floor..=ceiling).contains(gas),
+                "{label}: estimate {gas} is outside {floor}..={ceiling}; search tracked the cap instead of a valid range"
+            );
+        }
+        assert!(
+            (high - low) as f64 / high as f64 <= ESTIMATE_GAS_ERROR_RATIO,
+            "estimates diverged across caps beyond the 1.5% search tolerance: {cases:?}"
+        );
+    }
+
+    fn cap_label(gas: Option<u64>) -> String {
+        match gas {
+            None => format!("omitted gas (block cap {BLOCK_GAS_CAP})"),
+            Some(cap) => format!("request gas {cap}"),
+        }
+    }
+
+    /// Non-empty calldata to an EOA must stay in a small band for every cap.
+    /// The unfixed search returns ~80% of the cap (about 40k at a 50k cap, and
+    /// tens of millions at the 36m block cap).
+    #[tokio::test]
+    async fn estimate_gas_eoa_calldata_not_proportional_to_cap() {
+        let recipient = Address::repeat_byte(0x22);
+        let provider = MockEthProvider::default();
+        provider.extend_accounts([
+            (sender(), sender_account()),
+            (recipient, ExtendedAccount::new(0, U256::ZERO)),
+        ]);
+
+        let mut cases = Vec::new();
+        for gas in [None, Some(50_000), Some(100_000), Some(500_000), Some(5_000_000)] {
+            let estimate = estimate_and_replay(
+                &provider,
+                BLOCK_GAS_CAP,
+                call_request(recipient, gas, &[0x12, 0x34]),
+            );
+            cases.push((cap_label(gas), estimate));
+        }
+        assert_shared_band(&cases, MIN_TRANSACTION_GAS, EOA_CALLDATA_CEILING);
+    }
+
+    /// Empty calldata to a contract must not take the EOA 21_000 shortcut.
+    #[tokio::test]
+    async fn estimate_gas_empty_calldata_contract_skips_eoa_shortcut() {
+        let contract = Address::repeat_byte(0x33);
+        // PUSH1 1, PUSH1 0, SSTORE, STOP. Real work, so 21_000 cannot succeed.
+        let bytecode = Bytes::from_static(&[0x60, 0x01, 0x60, 0x00, 0x55, 0x00]);
+        let provider = MockEthProvider::default();
+        provider.extend_accounts([
+            (sender(), sender_account()),
+            (contract, ExtendedAccount::new(0, U256::ZERO).with_bytecode(bytecode)),
+        ]);
+
+        let mut cases = Vec::new();
+        for gas in [None, Some(500_000)] {
+            let estimate =
+                estimate_and_replay(&provider, BLOCK_GAS_CAP, call_request(contract, gas, &[]));
+            cases.push((cap_label(gas), estimate));
+        }
+        assert_shared_band(&cases, MIN_TRANSACTION_GAS + 1, CONTRACT_CALL_CEILING);
+    }
+
+    /// Storage clear inside an internal CALL. The returned limit must execute,
+    /// including the transient CALL budget, and must not scale with the cap.
+    #[tokio::test]
+    async fn estimate_gas_storage_refund_call_replays_within_bound() {
+        let caller = Address::repeat_byte(0x33);
+        let callee = Address::repeat_byte(0x44);
+        // PUSH1 0, PUSH1 0, SSTORE, STOP. Slot 0 starts non-zero, so this refunds.
+        let callee_code = Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0x55, 0x00]);
+        let provider = MockEthProvider::default();
+        provider.extend_accounts([
+            (sender(), sender_account()),
+            (caller, ExtendedAccount::new(0, U256::ZERO).with_bytecode(call_or_revert(callee))),
+            (
+                callee,
+                ExtendedAccount::new(0, U256::ZERO)
+                    .with_bytecode(callee_code)
+                    .extend_storage([(B256::ZERO, U256::from(1))]),
+            ),
+        ]);
+
+        let mut cases = Vec::new();
+        for gas in [None, Some(500_000)] {
+            let estimate =
+                estimate_and_replay(&provider, BLOCK_GAS_CAP, call_request(caller, gas, &[]));
+            cases.push((cap_label(gas), estimate));
+        }
+        assert_shared_band(&cases, MIN_TRANSACTION_GAS + 1, REFUND_CALL_CEILING);
+    }
+
+    /// Empty-data EOA transfer hits the production minimum-gas shortcut.
+    #[tokio::test]
+    async fn estimate_gas_eoa_empty_transfer_is_min_transaction_gas() {
+        let recipient = Address::repeat_byte(0x22);
+        let provider = MockEthProvider::default();
+        provider.extend_accounts([
+            (sender(), sender_account()),
+            (recipient, ExtendedAccount::new(0, U256::ZERO)),
+        ]);
+
+        for gas in [None, Some(100_000), Some(BLOCK_GAS_CAP)] {
+            let mut request = call_request(recipient, gas, &[]);
+            request.value = Some(U256::from(1));
+            let estimate = estimate_and_replay(&provider, BLOCK_GAS_CAP, request);
+            assert_eq!(
+                estimate,
+                MIN_TRANSACTION_GAS,
+                "{}: empty-data EOA transfer must be {MIN_TRANSACTION_GAS}, got {estimate}",
+                cap_label(gas)
+            );
+        }
+    }
+
+    /// Independent of estimation: a fixed 100_000 limit on low-work execution
+    /// must still bill 80_000. Catches a revm edit that drops the floor.
+    #[tokio::test]
+    async fn estimate_gas_billing_floor_fixed_limit_bills_eighty_percent() {
+        let recipient = Address::repeat_byte(0x22);
+        let provider = MockEthProvider::default();
+        provider.extend_accounts([
+            (sender(), sender_account()),
+            (recipient, ExtendedAccount::new(0, U256::ZERO)),
+        ]);
+        let eth_api = build_test_eth_api(provider.clone());
+        let request = call_request(recipient, Some(FIXED_BILLING_LIMIT), &[]);
+        let gas_used = execute_gas_used(
+            &eth_api,
+            &provider,
+            estimation_env(&provider, BLOCK_GAS_CAP),
+            request,
+            FIXED_BILLING_LIMIT,
+        );
+        assert_eq!(
+            gas_used, FIXED_BILLING_USED,
+            "fixed limit {FIXED_BILLING_LIMIT} must bill {FIXED_BILLING_USED}, got {gas_used}"
+        );
+    }
+
+    /// Create with caps above the 53_000 intrinsic must stay near that intrinsic.
+    #[tokio::test]
+    async fn estimate_gas_contract_creation_stays_near_intrinsic() {
+        let provider = MockEthProvider::default();
+        provider.add_account(sender(), sender_account());
+        // PUSH1 0, PUSH1 0, RETURN. Empty runtime, so the cost is the create intrinsic
+        // plus a few bytes of init code.
+        let init_code = &[0x60, 0x00, 0x60, 0x00, 0xf3];
+
+        let mut cases = Vec::new();
+        for gas in [None, Some(200_000)] {
+            let estimate =
+                estimate_and_replay(&provider, BLOCK_GAS_CAP, create_request(gas, init_code));
+            cases.push((cap_label(gas), estimate));
+        }
+        assert_shared_band(&cases, CREATION_INTRINSIC, CREATION_CEILING);
+    }
+
+    #[tokio::test]
+    async fn estimate_gas_revert_propagates() {
+        let contract = Address::repeat_byte(0x33);
+        // PUSH1 0, PUSH1 0, REVERT.
+        let bytecode = Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xfd]);
+        let provider = MockEthProvider::default();
+        provider.extend_accounts([
+            (sender(), sender_account()),
+            (contract, ExtendedAccount::new(0, U256::ZERO).with_bytecode(bytecode)),
+        ]);
+        let eth_api = build_test_eth_api(provider.clone());
+        let err = EstimateCall::estimate_gas_with(
+            &eth_api,
+            estimation_env(&provider, BLOCK_GAS_CAP),
+            call_request(contract, None, &[]),
+            provider,
+            None::<StateOverride>,
+        )
+        .expect_err("genuine revert must not return a gas estimate");
+        assert!(
+            matches!(err, EthApiError::InvalidTransaction(RpcInvalidTransactionError::Revert(_))),
+            "genuine revert must propagate as a revert error, got {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn estimate_gas_insufficient_cap_propagates() {
+        let provider = MockEthProvider::default();
+        provider.add_account(sender(), sender_account());
+        // 40_000 is below the 53_000 create intrinsic, so the initial execution
+        // cannot succeed at the block cap.
+        let block_cap = 40_000;
+        let eth_api = build_test_eth_api(provider.clone());
+        let err = EstimateCall::estimate_gas_with(
+            &eth_api,
+            estimation_env(&provider, block_cap),
+            create_request(None, &[0x60, 0x00, 0x60, 0x00, 0xf3]),
+            provider,
+            None::<StateOverride>,
+        )
+        .expect_err("cap below create intrinsic must not return a gas estimate");
+        assert!(
+            matches!(
+                err,
+                EthApiError::InvalidTransaction(
+                    RpcInvalidTransactionError::GasRequiredExceedsAllowance { .. }
+                )
+            ),
+            "insufficient cap must propagate a gas allowance error, got {err}"
         );
     }
 }

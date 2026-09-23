@@ -9,7 +9,9 @@ use alloy_rpc_types_eth::{state::StateOverride, BlockId};
 use futures::Future;
 use reth_chainspec::MIN_TRANSACTION_GAS;
 use reth_errors::ProviderError;
-use reth_evm::{ConfigureEvm, Database, Evm, EvmEnvFor, EvmFor, TransactionEnv, TxEnvFor};
+use reth_evm::{
+    ConfigureEvm, Database, Evm, EvmEnvFor, EvmFor, InspectorFor, TransactionEnv, TxEnvFor,
+};
 use reth_revm::{database::StateProviderDatabase, db::CacheDB};
 use reth_rpc_convert::{RpcConvert, RpcTxReq};
 use reth_rpc_eth_types::{
@@ -18,7 +20,14 @@ use reth_rpc_eth_types::{
 };
 use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use reth_storage_api::StateProvider;
-use revm::context_interface::{result::ExecutionResult, Transaction};
+use revm::{
+    context_interface::{result::ExecutionResult, Cfg, ContextTr, Transaction},
+    interpreter::{
+        gas::calculate_initial_tx_gas_for_tx, CallInputs, CallOutcome, CreateInputs, CreateOutcome,
+        InterpreterResult,
+    },
+    Inspector,
+};
 use tracing::trace;
 
 /// Gas execution estimates
@@ -109,8 +118,14 @@ pub trait EstimateCall: Call {
         // If the provided gas limit is less than computed cap, use that
         tx_env.set_gas_limit(tx_env.gas_limit().min(highest_gas_limit));
 
-        // Create EVM instance once and reuse it throughout the entire estimation process
-        let mut evm = self.evm_config().evm_with_env(&mut db, evm_env);
+        // Create EVM instance once and reuse it throughout the entire estimation process.
+        // The inspector records execution gas before settlement; it is only needed for
+        // the first full execution and is disabled before the search.
+        let mut evm = self.evm_config().evm_with_env_and_inspector(
+            &mut db,
+            evm_env,
+            MaxUsedGasInspector::default(),
+        );
 
         // For basic transfers, try using minimum gas before running full binary search
         if is_basic_transfer {
@@ -158,8 +173,8 @@ pub trait EstimateCall: Call {
             ethres => ethres?,
         };
 
-        let gas_refund = match res.result {
-            ExecutionResult::Success { gas_refunded, .. } => gas_refunded,
+        match res.result {
+            ExecutionResult::Success { .. } => {}
             ExecutionResult::Halt { reason, .. } => {
                 // here we don't check for invalid opcode because already executed with highest gas
                 // limit
@@ -175,7 +190,12 @@ pub trait EstimateCall: Call {
                     Err(RpcInvalidTransactionError::Revert(RevertError::new(output)).into_eth_err())
                 }
             }
-        };
+        }
+
+        // A successful execution always ends its top-level frame, so the value is set.
+        let max_used_gas =
+            evm.inspector().max_used_gas().expect("successful execution ends its top-level frame");
+        evm.disable_inspector();
 
         // At this point we know the call succeeded but want to find the _best_ (lowest) gas the
         // transaction succeeds with. We find this by doing a binary search over the possible range.
@@ -190,13 +210,13 @@ pub trait EstimateCall: Call {
         // the lowest value is capped by the gas used by the unconstrained transaction
         let mut lowest_gas_limit = gas_used.saturating_sub(1);
 
-        // As stated in Geth, there is a good chance that the transaction will pass if we set the
-        // gas limit to the execution gas used plus the gas refund, so we check this first
-        // <https://github.com/ethereum/go-ethereum/blob/a5a4fa7032bb248f5a7c40f4e8df2b131c4186a4/eth/gasestimator/gasestimator.go#L135
+        // Use execution gas before refunds and the 0G minimum charge, as geth does. On 0G
+        // `gas_used + gas_refund` is the billed amount, about 80% of the limit, which made
+        // estimates track the request cap:
+        // <https://github.com/0gfoundation/0g-geth/blob/fe4a0b1f53aee321cc31c7803214aaf66dd0ae78/eth/gasestimator/gasestimator.go#L147>
         //
-        // Calculate the optimistic gas limit by adding gas used and gas refund,
-        // then applying a 64/63 multiplier to account for gas forwarding rules.
-        let optimistic_gas_limit = (gas_used + gas_refund + CALL_STIPEND_GAS) * 64 / 63;
+        // Apply a 64/63 multiplier to account for gas forwarding rules.
+        let optimistic_gas_limit = (max_used_gas + CALL_STIPEND_GAS) * 64 / 63;
         if optimistic_gas_limit < highest_gas_limit {
             // Set the transaction's gas limit to the calculated optimistic gas limit.
             let mut optimistic_tx_env = tx_env.clone();
@@ -295,13 +315,14 @@ pub trait EstimateCall: Call {
     /// Executes the requests again after an out of gas error to check if the error is gas related
     /// or not
     #[inline]
-    fn map_out_of_gas_err<DB>(
-        evm: &mut EvmFor<Self::Evm, DB>,
+    fn map_out_of_gas_err<DB, I>(
+        evm: &mut EvmFor<Self::Evm, DB, I>,
         mut tx_env: TxEnvFor<Self::Evm>,
         max_gas_limit: u64,
     ) -> Result<U256, Self::Error>
     where
         DB: Database<Error = ProviderError>,
+        I: InspectorFor<Self::Evm, DB>,
         EthApiError: From<DB::Error>,
     {
         let req_gas_limit = tx_env.gas_limit();
@@ -357,4 +378,52 @@ pub fn update_estimated_gas_range<Halt>(
     };
 
     Ok(())
+}
+
+/// Records the gas a transaction used before refunds and the 0G minimum charge.
+///
+/// This is geth's `MaxUsedGas`. The 0G revm fork raises `gas_used` to 80% of the gas limit
+/// and clears the refund after execution, so the execution result no longer carries it.
+/// Frames end before that settlement, and the top-level frame ends last, so the value from
+/// the last `call_end`/`create_end` is the one for the whole transaction.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MaxUsedGasInspector {
+    max_used_gas: Option<u64>,
+}
+
+impl MaxUsedGasInspector {
+    /// Gas used before refunds and the 0G minimum charge, raised to the EIP-7623 data floor.
+    ///
+    /// `None` until a frame has ended.
+    pub const fn max_used_gas(&self) -> Option<u64> {
+        self.max_used_gas
+    }
+
+    fn record<CTX: ContextTr>(&mut self, context: &CTX, frame: &InterpreterResult) {
+        let tx = context.tx();
+        // Same rule as revm's `last_frame_result`: a halt spends the whole limit.
+        let spent = if frame.result.is_ok_or_revert() {
+            tx.gas_limit() - frame.gas.remaining()
+        } else {
+            tx.gas_limit()
+        };
+        // Same floor revm validates against; zero before Prague.
+        let floor = calculate_initial_tx_gas_for_tx(tx, context.cfg().spec().into()).floor_gas;
+        self.max_used_gas = Some(spent.max(floor));
+    }
+}
+
+impl<CTX: ContextTr> Inspector<CTX> for MaxUsedGasInspector {
+    fn call_end(&mut self, context: &mut CTX, _inputs: &CallInputs, outcome: &mut CallOutcome) {
+        self.record(context, &outcome.result);
+    }
+
+    fn create_end(
+        &mut self,
+        context: &mut CTX,
+        _inputs: &CreateInputs,
+        outcome: &mut CreateOutcome,
+    ) {
+        self.record(context, &outcome.result);
+    }
 }
