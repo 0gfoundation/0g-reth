@@ -21,7 +21,7 @@ use reth_rpc_eth_types::{
 use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use reth_storage_api::StateProvider;
 use revm::{
-    context_interface::{result::ExecutionResult, Cfg, ContextTr, Transaction},
+    context_interface::{result::ExecutionResult, Cfg, ContextTr, JournalTr, Transaction},
     interpreter::{
         gas::calculate_initial_tx_gas_for_tx, CallInputs, CallOutcome, CreateInputs, CreateOutcome,
         InterpreterResult,
@@ -384,8 +384,7 @@ pub fn update_estimated_gas_range<Halt>(
 ///
 /// This is geth's `MaxUsedGas`. The 0G revm fork raises `gas_used` to 80% of the gas limit
 /// and clears the refund after execution, so the execution result no longer carries it.
-/// Frames end before that settlement, and the top-level frame ends last, so the value from
-/// the last `call_end`/`create_end` is the one for the whole transaction.
+/// The top-level frame ends before that settlement, and it is the only frame recorded.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MaxUsedGasInspector {
     max_used_gas: Option<u64>,
@@ -394,12 +393,19 @@ pub struct MaxUsedGasInspector {
 impl MaxUsedGasInspector {
     /// Gas used before refunds and the 0G minimum charge, raised to the EIP-7623 data floor.
     ///
-    /// `None` until a frame has ended.
+    /// `None` until a top-level frame has ended.
     pub const fn max_used_gas(&self) -> Option<u64> {
         self.max_used_gas
     }
 
     fn record<CTX: ContextTr>(&mut self, context: &CTX, frame: &InterpreterResult) {
+        // revm settles a frame's journal checkpoint before its end hook, so only the top-level
+        // frame ends at depth 0. Nested frames are skipped: the floor below scans the whole
+        // calldata, and doing that at every frame end costs frames x calldata length, both
+        // chosen by the caller.
+        if context.journal().depth() != 0 {
+            return;
+        }
         let tx = context.tx();
         // Same rule as revm's `last_frame_result`: a halt spends the whole limit.
         let spent = if frame.result.is_ok_or_revert() {
