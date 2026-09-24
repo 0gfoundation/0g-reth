@@ -6,9 +6,10 @@ use eyre::Result;
 use reth_chainspec::{ChainSpecBuilder, MAINNET};
 use reth_e2e_test_utils::testsuite::{
     actions::{
-        CaptureBlock, CompareNodeChainTips, CreateFork, ExpectFcuStatus, MakeCanonical,
-        ProduceBlocks, ProduceBlocksLocally, ProduceInvalidBlocks, ReorgTo, SelectActiveNode,
-        SendNewPayloads, UpdateBlockInfo, ValidateCanonicalTag, WaitForSync,
+        CaptureBlock, CompareNodeChainTips, CreateFork, ExpectFcuStatus, ExpectedPayloadStatus,
+        MakeCanonical, ProduceBlocks, ProduceBlocksLocally, ProduceInvalidBlocks, ReorgTo,
+        SelectActiveNode, SendNewPayload, SendNewPayloads, UpdateBlockInfo, ValidateCanonicalTag,
+        WaitForSync,
     },
     setup::{NetworkSetup, Setup},
     TestBuilder,
@@ -329,6 +330,33 @@ async fn test_engine_tree_live_sync_transition_eventually_canonical_e2e() -> Res
         .with_action(WaitForSync::new(0, 1).with_timeout(60))
         // Verify both nodes end up with the same canonical chain
         .with_action(CompareNodeChainTips::expect_same(0, 1));
+
+    test.run::<EthereumNode>().await?;
+
+    Ok(())
+}
+
+/// Test that newPayload for a block that is persisted and no longer in memory is VALID, like the
+/// CL replaying its head right after the node restarts.
+#[tokio::test]
+async fn test_engine_tree_new_payload_for_persisted_block_e2e() -> Result<()> {
+    reth_tracing::init_test_tracing();
+
+    let test = TestBuilder::new()
+        .with_setup(
+            default_engine_tree_setup().with_tree_config(
+                // persist every canonical block and drop it from memory right away
+                TreeConfig::default()
+                    .with_legacy_state_root(false)
+                    .with_has_enough_parallelism(true)
+                    .with_persistence_threshold(0)
+                    .with_memory_block_buffer_target(0),
+            ),
+        )
+        .with_action(ProduceBlocks::<EthEngineTypes>::new(5))
+        .with_action(MakeCanonical::new())
+        // block 1 is on disk and out of memory by now; the node must not panic on it
+        .with_action(SendNewPayload::<EthEngineTypes>::new(0, 1, 0, ExpectedPayloadStatus::Valid));
 
     test.run::<EthereumNode>().await?;
 

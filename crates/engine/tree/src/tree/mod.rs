@@ -1765,21 +1765,6 @@ where
         }
     }
 
-    /// Return requests from in-memory state or database by hash.
-    fn requests_by_hash(
-        &self,
-        hash: B256,
-    ) -> ProviderResult<Option<Requests>> {
-        // check memory only
-        let requests = self.state.tree_state.execution_requests_by_hash(&hash);
-
-        if requests.is_some() {
-            Ok(requests)
-        } else {
-            Err(ProviderError::BlockHashNotFound(hash))
-        }
-    }
-
     /// Return the parent hash of the lowest buffered ancestor for the requested block, if there
     /// are any buffered ancestors. If there are no buffered ancestors, and the block itself does
     /// not exist in the buffer, this returns the hash that is passed in.
@@ -2355,15 +2340,22 @@ where
                 let block = convert_to_block(self, input)?;
                 return Err(InsertBlockError::new(block.into_sealed_block(), err.into()).into());
             }
-            Ok(Some( header )) => {
-                // We now assume that we already have this block in the tree. However, we need to
-                // run the conversion to ensure that the block hash is valid.
-                convert_to_block(self, input)?;
-
-                // revert if return provider error
-                let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
-                              
-                return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: header.num_hash(), requests }))
+            Ok(Some(header)) => {
+                // Execution requests are only kept for blocks in the in-memory tree, and the CL
+                // applies the ones in the response. A known block that is no longer in memory
+                // (persisted, e.g. replayed after a restart) falls through and is executed again
+                // on its parent to rebuild them, as 0g-geth does for every payload.
+                if let Some(requests) =
+                    self.state.tree_state.execution_requests_by_hash(&block_num_hash.hash)
+                {
+                    // We now assume that we already have this block in the tree. However, we need
+                    // to run the conversion to ensure that the block hash is valid.
+                    convert_to_block(self, input)?;
+                    return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
+                        head: header.num_hash(),
+                        requests: requests.take(),
+                    }))
+                }
             }
             _ => {}
         };

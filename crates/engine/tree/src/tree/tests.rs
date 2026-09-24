@@ -58,7 +58,7 @@ impl EngineApiValidator<EthEngineTypes> for MockEngineValidator {
         _payload_or_attrs: reth_payload_primitives::PayloadOrAttributes<
             '_,
             alloy_rpc_types_engine::ExecutionData,
-            alloy_rpc_types_engine::PayloadAttributes,
+            reth_ethereum_engine_primitives::EthPayloadAttributes,
         >,
     ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
         // Mock implementation - always valid
@@ -68,7 +68,7 @@ impl EngineApiValidator<EthEngineTypes> for MockEngineValidator {
     fn ensure_well_formed_attributes(
         &self,
         _version: reth_payload_primitives::EngineApiMessageVersion,
-        _attributes: &alloy_rpc_types_engine::PayloadAttributes,
+        _attributes: &reth_ethereum_engine_primitives::EthPayloadAttributes,
     ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
         // Mock implementation - always valid
         Ok(())
@@ -245,6 +245,7 @@ impl TestHarness {
             parent_to_child,
             persisted_trie_updates: HashMap::default(),
             engine_kind: EngineApiKind::Ethereum,
+            payload_to_executed_hash: HashMap::default(),
         };
 
         let last_executed_block = blocks.last().unwrap().clone();
@@ -1144,4 +1145,53 @@ fn test_on_new_payload_malformed_payload() {
             "Malformed payload must have latestValidHash = None when invalid"
         );
     }
+}
+
+/// The CL re-sends a block that is persisted but no longer in memory, e.g. the head it replays
+/// right after a restart. Its execution requests only live in memory and the CL applies the ones
+/// in the response, so the block is executed again to rebuild them. Once the block is back in
+/// memory, a replay is answered from there.
+#[test]
+fn test_insert_persisted_block_not_in_memory() {
+    reth_tracing::init_test_tracing();
+
+    let decode = |rlp: &str| {
+        let data = Bytes::from_str(rlp).unwrap();
+        Block::decode(&mut data.as_ref()).unwrap().seal_slow().try_recover().unwrap()
+    };
+    let parent = decode(include_str!("../../test-data/holesky/1.rlp"));
+    let block = decode(include_str!("../../test-data/holesky/2.rlp"));
+
+    // State right after a restart: both blocks are on disk and `block` is the canonical head,
+    // but the in-memory tree is empty.
+    let mut test_harness = TestHarness::new(HOLESKY.clone());
+    test_harness.persist_blocks(vec![parent, block.clone()]);
+    test_harness.tree.state.tree_state.set_canonical_head(block.num_hash());
+
+    let requests = Requests::new(vec![Bytes::from_static(&[0x01, 0xaa])]);
+    let valid = BlockStatus::Valid { head: block.num_hash(), requests: requests.clone().take() };
+
+    // Not in memory: executed again, the response carries the requests of that execution.
+    let executed = ExecutedBlockWithTrieUpdates::new(
+        Arc::new(block.clone()),
+        Arc::new(ExecutionOutcome { requests: vec![requests], ..Default::default() }),
+        Arc::new(HashedPostState::default()),
+        ExecutedTrieUpdates::empty(),
+    );
+    let outcome = test_harness.tree.insert_block_or_payload(
+        block.block_with_parent(),
+        block.clone(),
+        |_, _, _| Ok(executed),
+        |_, block| Ok::<_, InsertBlockError<Block>>(block),
+    );
+    assert_eq!(outcome.unwrap(), InsertPayloadOk::Inserted(valid.clone()));
+
+    // Back in memory: answered from there without executing it again.
+    let outcome = test_harness.tree.insert_block_or_payload(
+        block.block_with_parent(),
+        block.clone(),
+        |_, _, _| unreachable!("a block in memory is not executed again"),
+        |_, block| Ok::<_, InsertBlockError<Block>>(block),
+    );
+    assert_eq!(outcome.unwrap(), InsertPayloadOk::AlreadySeen(valid));
 }
