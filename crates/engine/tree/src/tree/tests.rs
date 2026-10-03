@@ -11,7 +11,9 @@ use crate::{
 use reth_storage_overlay::OverlayManager;
 
 use alloy_eip7928::bal::DecodedBal;
-use alloy_eips::eip1898::BlockWithParent;
+// reth-v2.8.1 migration: d48ed753f's test used `Requests` through `use super::*`; the tree
+// module no longer imports it (its `requests_by_hash` helper is gone), so it is imported here.
+use alloy_eips::{eip1898::BlockWithParent, eip7685::Requests};
 use alloy_primitives::{
     map::{B256Map, B256Set},
     Bytes, B256,
@@ -90,7 +92,7 @@ impl EngineApiValidator<EthEngineTypes> for MockEngineValidator {
         _payload_or_attrs: reth_payload_primitives::PayloadOrAttributes<
             '_,
             alloy_rpc_types_engine::ExecutionData,
-            alloy_rpc_types_engine::PayloadAttributes,
+            reth_ethereum_engine_primitives::EthPayloadAttributes,
         >,
     ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
         // Mock implementation - always valid
@@ -100,7 +102,7 @@ impl EngineApiValidator<EthEngineTypes> for MockEngineValidator {
     fn ensure_well_formed_attributes(
         &self,
         _version: reth_payload_primitives::EngineApiMessageVersion,
-        _attributes: &alloy_rpc_types_engine::PayloadAttributes,
+        _attributes: &reth_ethereum_engine_primitives::EthPayloadAttributes,
     ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
         // Mock implementation - always valid
         Ok(())
@@ -316,6 +318,9 @@ impl TestHarness {
             parent_to_child,
             engine_kind: EngineApiKind::Ethereum,
             overlay_manager,
+            // reth-v2.8.1 migration: d48ed753f wrote `HashMap::default()`; the field is a
+            // `B256Map` here (see `TreeState`).
+            payload_to_executed_hash: B256Map::default(),
         };
 
         let canonical_in_memory_state = CanonicalInMemoryState::empty();
@@ -3694,4 +3699,65 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EngineSpanParents {
             self.0.lock().unwrap().push(ctx.span(id).unwrap().parent().map(|parent| parent.id()));
         }
     }
+}
+
+/// The CL re-sends a block that is persisted but no longer in memory, e.g. the head it replays
+/// right after a restart. Its execution requests only live in memory and the CL applies the ones
+/// in the response, so the block is executed again to rebuild them. Once the block is back in
+/// memory, a replay is answered from there.
+#[test]
+fn test_insert_persisted_block_not_in_memory() {
+    reth_tracing::init_test_tracing();
+
+    let decode = |rlp: &str| {
+        let data = Bytes::from_str(rlp).unwrap();
+        Block::decode(&mut data.as_ref()).unwrap().seal_slow().try_recover().unwrap()
+    };
+    let parent = decode(include_str!("../../test-data/holesky/1.rlp"));
+    let block = decode(include_str!("../../test-data/holesky/2.rlp"));
+
+    // State right after a restart: both blocks are on disk and `block` is the canonical head,
+    // but the in-memory tree is empty.
+    let mut test_harness = TestHarness::new(HOLESKY.clone());
+    test_harness.persist_blocks(vec![parent, block.clone()]);
+    test_harness.tree.state.tree_state.set_canonical_head(block.num_hash());
+    // reth-v2.8.1 migration: upstream only looks a known block up on disk when it is at or
+    // below the persisted frontier, which the harness leaves at genesis; set it to `block` like
+    // a restarted node, so the known-on-disk path is the one exercised.
+    test_harness.tree.persistence_state.last_persisted_block = block.num_hash();
+
+    let requests = Requests::new(vec![Bytes::from_static(&[0x01, 0xaa])]);
+    let valid = BlockStatus::Valid { head: block.num_hash(), requests: requests.clone().take() };
+
+    // Not in memory: executed again, the response carries the requests of that execution.
+    //
+    // reth-v2.8.1 migration: the original built an `ExecutedBlockWithTrieUpdates` from an
+    // `ExecutionOutcome` with `requests: vec![requests]`, returned it from the execute closure
+    // and returned the input block from the convert closure. Upstream merged that type into
+    // `ExecutedBlock`, whose `BlockExecutionOutput` holds this block's single `Requests`; the
+    // execute closure returns a `ValidationOutput` and the convert closure a
+    // `SealedBlockWithAccessList`.
+    let mut execution_output = BlockExecutionOutput::default();
+    execution_output.result.requests = requests;
+    let executed = ExecutedBlock::new(
+        Arc::new(block.clone()),
+        Arc::new(execution_output),
+        SortedTrieData::default(),
+    );
+    let outcome = test_harness.tree.insert_block_or_payload(
+        block.block_with_parent(),
+        block.clone(),
+        |_, _, _| Ok(ValidationOutput::new(executed, None)),
+        |_, block| Ok::<_, InsertBlockError<Block>>(block.into_sealed_block().into()),
+    );
+    assert_eq!(outcome.unwrap(), InsertPayloadOk::Inserted(valid.clone()));
+
+    // Back in memory: answered from there without executing it again.
+    let outcome = test_harness.tree.insert_block_or_payload(
+        block.block_with_parent(),
+        block.clone(),
+        |_, _, _| unreachable!("a block in memory is not executed again"),
+        |_, block| Ok::<_, InsertBlockError<Block>>(block.into_sealed_block().into()),
+    );
+    assert_eq!(outcome.unwrap(), InsertPayloadOk::AlreadySeen(valid));
 }

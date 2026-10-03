@@ -6,7 +6,7 @@ use crate::{
     tree::{error::InsertPayloadError, payload_validator::TreeCtx},
 };
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_eips::{eip1898::BlockWithParent, BlockNumHash, NumHash, eip7685::Requests};
+use alloy_eips::{eip1898::BlockWithParent, BlockNumHash, NumHash};
 use alloy_primitives::{map::B256Map, B256, Bytes};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
@@ -2508,21 +2508,6 @@ where
         }
     }
 
-    /// Return requests from in-memory state or database by hash.
-    fn requests_by_hash(
-        &self,
-        hash: B256,
-    ) -> ProviderResult<Option<Requests>> {
-        // check memory only
-        let requests = self.state.tree_state.execution_requests_by_hash(&hash);
-
-        if requests.is_some() {
-            Ok(requests)
-        } else {
-            Err(ProviderError::BlockHashNotFound(hash))
-        }
-    }
-
     /// Return the parent hash of the lowest buffered ancestor for the requested block, if there
     /// are any buffered ancestors. If there are no buffered ancestors, and the block itself does
     /// not exist in the buffer, this returns the hash that is passed in.
@@ -3253,39 +3238,43 @@ where
         debug!(target: "engine::tree", block=?block_num_hash, parent = ?block_id.parent, "Inserting new block into tree");
 
         // Check if block already exists - first in memory, then DB only if it could be persisted
-        if self.state.tree_state.contains_hash(&block_num_hash.hash) {
+        //
+        // Execution requests are only kept for blocks in the in-memory tree, and the CL
+        // applies the ones in the response. A known block that is no longer in memory
+        // (persisted, e.g. replayed after a restart) falls through and is executed again
+        // on its parent to rebuild them, as 0g-geth does for every payload.
+        //
+        // reth-v2.8.1 migration: d48ed753f did this in the known-block branch of the single
+        // `sealed_header_by_hash` lookup (memory first, then DB): `AlreadySeen` only when
+        // `execution_requests_by_hash` finds the requests, otherwise fall through. Upstream split
+        // that lookup into this in-memory check and the DB check below. The requests come from
+        // the same `blocks_by_hash` map as upstream's `contains_hash`, so they replace that check
+        // here; `head` is `block_num_hash` as before (the block was found by this hash).
+        if let Some(requests) =
+            self.state.tree_state.execution_requests_by_hash(&block_num_hash.hash)
+        {
+            // We now assume that we already have this block in the tree. However, we need
+            // to run the conversion to ensure that the block hash is valid.
             convert_to_block(self, input)?;
-
-            // reth-v2.8.1 migration: c536004cf returned the known block's head and execution
-            // requests from its single `sealed_header_by_hash` lookup (memory first, then DB).
-            // Upstream split that lookup into this in-memory check and the DB check below, so the
-            // same code is applied to both. The header was looked up by this block's hash, so
-            // `header.num_hash()` is `block_num_hash` here. 7fc52f8887 removed the debug log.
-            // revert if return provider error
-            let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
-
-            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: block_num_hash, requests }));
+            return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid {
+                head: block_num_hash,
+                requests: requests.take(),
+            }))
         }
 
         // Only query DB if block could be persisted (number <= last persisted block).
         // New blocks from CL always have number > last persisted, so skip DB lookup for them.
-        if block_num_hash.number <= self.persistence_state.last_persisted_block.number {
-            match self.provider.sealed_header_by_hash(block_num_hash.hash) {
-                Err(err) => {
-                    let block = convert_to_block(self, input)?;
-                    return Err(InsertBlockError::new(block.split().0, err.into()).into());
-                }
-                // reth-v2.8.1 migration: c536004cf, see the in-memory check above.
-                Ok(Some( header )) => {
-                    convert_to_block(self, input)?;
-
-                    // revert if return provider error
-                    let requests =  self.requests_by_hash(block_num_hash.hash).unwrap().unwrap_or_default().take();
-
-                    return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid{ head: header.num_hash(), requests }));
-                }
-                Ok(None) => {}
-            }
+        //
+        // reth-v2.8.1 migration: d48ed753f, see the in-memory check above. A block found here
+        // is not in memory (that check returned otherwise), so its requests are gone and it falls
+        // through to be executed again, as when the original's in-memory lookup missed. That
+        // leaves only the lookup error to handle, so upstream's `match` (whose `Ok(Some(_))` arm
+        // returned `AlreadySeen`) becomes this `let` chain.
+        if block_num_hash.number <= self.persistence_state.last_persisted_block.number &&
+            let Err(err) = self.provider.sealed_header_by_hash(block_num_hash.hash)
+        {
+            let block = convert_to_block(self, input)?;
+            return Err(InsertBlockError::new(block.split().0, err.into()).into());
         }
 
         // When the CL times out and retries the same payload, the hash-based lookup above

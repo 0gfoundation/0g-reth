@@ -14,9 +14,10 @@ use reth_e2e_test_utils::{
     testsuite::{
         actions::{
             Action, AssertChainTip, BlockReference, CaptureBlock, CompareNodeChainTips, CreateFork,
-            ExpectFcuStatus, FinalizeBlock, MakeCanonical, ProduceBlocks, ProduceBlocksLocally,
-            ProduceInvalidBlocks, ReorgTo, SelectActiveNode, SendForkchoiceUpdate, SendNewPayloads,
-            SetForkBase, UpdateBlockInfo, ValidateCanonicalTag, WaitForSync,
+            ExpectFcuStatus, ExpectedPayloadStatus, FinalizeBlock, MakeCanonical, ProduceBlocks,
+            ProduceBlocksLocally, ProduceInvalidBlocks, ReorgTo, SelectActiveNode,
+            SendForkchoiceUpdate, SendNewPayload, SendNewPayloads, SetForkBase, UpdateBlockInfo,
+            ValidateCanonicalTag, WaitForSync,
         },
         setup::{NetworkSetup, Setup},
         Environment, TestBuilder,
@@ -903,6 +904,37 @@ async fn test_engine_tree_disk_reorg_with_masked_state_trie_e2e() -> Result<()> 
         .with_action(WaitForPersistedChain::new(0, "extended_fork_tip"))
         .run::<EthereumNode>()
         .await?;
+
+    Ok(())
+}
+
+/// Test that newPayload for a block that is persisted and no longer in memory is VALID, like the
+/// CL replaying its head right after the node restarts.
+#[tokio::test]
+async fn test_engine_tree_new_payload_for_persisted_block_e2e() -> Result<()> {
+    reth_tracing::init_test_tracing();
+
+    let test = TestBuilder::new()
+        .with_setup(
+            default_engine_tree_setup().with_tree_config(
+                // persist every canonical block and drop it from memory right away
+                //
+                // reth-v2.8.1 migration: the original also called
+                // `.with_legacy_state_root(false)`; upstream removed that option (#26069). A zero
+                // persistence threshold also turns off state masking here, so every canonical
+                // block is persisted.
+                TreeConfig::default()
+                    .with_has_enough_parallelism(true)
+                    .with_persistence_threshold(0)
+                    .with_memory_block_buffer_target(0),
+            ),
+        )
+        .with_action(ProduceBlocks::<EthEngineTypes>::new(5))
+        .with_action(MakeCanonical::new())
+        // block 1 is on disk and out of memory by now; the node must not panic on it
+        .with_action(SendNewPayload::<EthEngineTypes>::new(0, 1, 0, ExpectedPayloadStatus::Valid));
+
+    test.run::<EthereumNode>().await?;
 
     Ok(())
 }
