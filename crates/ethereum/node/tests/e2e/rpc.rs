@@ -122,6 +122,70 @@ async fn test_fee_history() -> eyre::Result<()> {
 }
 
 #[tokio::test]
+async fn test_fee_history_empty_block_reward_fallback() -> eyre::Result<()> {
+    reth_tracing::init_test_tracing();
+
+    let chain_spec = Arc::new(
+        ChainSpecBuilder::default()
+            .chain(MAINNET.chain)
+            .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+            .cancun_activated()
+            .build(),
+    );
+
+    let (mut nodes, _tasks, wallet) = setup_engine::<EthereumNode>(
+        1,
+        chain_spec.clone(),
+        false,
+        Default::default(),
+        eth_payload_attributes,
+    )
+    .await?;
+    let mut node = nodes.pop().unwrap();
+    let provider = ProviderBuilder::new()
+        .wallet(EthereumWallet::new(wallet.wallet_gen().swap_remove(0)))
+        .connect_http(node.rpc_url());
+
+    // A block with a transaction, so its rewards are transaction-derived.
+    let _ = provider.send_transaction(TransactionRequest::default().to(Address::ZERO)).await?;
+    node.advance_block().await?;
+
+    // An empty block: no pending transactions, so its reward percentiles would
+    // always be zero.
+    node.advance_block().await?;
+
+    let latest_block = provider.get_block_number().await?;
+    assert_eq!(latest_block, 2);
+
+    // The empty block's rewards should equal the suggested priority fee that
+    // `eth_maxPriorityFeePerGas` returns instead of zero.
+    let expected_tip =
+        provider.client().request_noparams::<U256>("eth_maxPriorityFeePerGas").await?;
+    let expected_tip = expected_tip.saturating_to::<u128>();
+    assert_ne!(
+        expected_tip, 0,
+        "the suggestion should be nonzero in this scenario, otherwise the test cannot \
+         distinguish the fallback from zero rewards"
+    );
+
+    let fee_history = provider.get_fee_history(2, latest_block.into(), &[25.0, 50.0, 75.0]).await?;
+    let reward = fee_history.reward.expect("percentiles were requested");
+    assert_eq!(reward.len(), 2, "should return one reward row per block");
+    assert_ne!(
+        reward[0],
+        vec![0; 3],
+        "the non-empty block's rewards should come from its transaction, not the fallback"
+    );
+    assert_eq!(
+        reward[1],
+        vec![expected_tip; 3],
+        "empty block should report the suggested priority fee instead of zero"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_flashbots_validate_v3() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
