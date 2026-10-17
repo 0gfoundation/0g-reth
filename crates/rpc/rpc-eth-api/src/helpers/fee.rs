@@ -131,6 +131,11 @@ pub trait EthFees:
 
             let mut rewards: Vec<Vec<u128>> = Vec::new();
 
+            // Suggested priority fee used as the reward for empty blocks, resolved
+            // lazily (at most once per request) since `suggest_tip_cap` samples
+            // recent blocks.
+            let mut cached_empty_block_tip: Option<u128> = None;
+
             // Check if the requested range is within the cache bounds
             let fee_entries = self.fee_history_cache().get_history(start_block, end_block).await;
 
@@ -147,11 +152,20 @@ pub trait EthFees:
                     blob_gas_used_ratio.push(entry.blob_gas_used_ratio);
 
                     if let Some(percentiles) = &reward_percentiles {
-                        let mut block_rewards = Vec::with_capacity(percentiles.len());
-                        for &percentile in percentiles {
-                            block_rewards.push(self.approximate_percentile(entry, percentile));
+                        if entry.header.gas_used() == 0 {
+                            // Empty blocks have no transactions, so the reward
+                            // percentiles would always be zero. Report the currently
+                            // suggested priority fee instead, the same value
+                            // `eth_maxPriorityFeePerGas` returns.
+                            let reward = self.empty_block_reward(&mut cached_empty_block_tip).await;
+                            rewards.push(vec![reward; percentiles.len()]);
+                        } else {
+                            let mut block_rewards = Vec::with_capacity(percentiles.len());
+                            for &percentile in percentiles {
+                                block_rewards.push(self.approximate_percentile(entry, percentile));
+                            }
+                            rewards.push(block_rewards);
                         }
-                        rewards.push(block_rewards);
                     }
                 }
                 let last_entry = fee_entries.last().expect("is not empty");
@@ -194,21 +208,31 @@ pub trait EthFees:
 
                     // Percentiles were specified, so we need to collect reward percentile info
                     if let Some(percentiles) = &reward_percentiles {
-                        let (block, receipts) = self.cache()
-                            .get_block_and_receipts(header.hash())
-                            .await
-                            .map_err(Self::Error::from_eth_err)?
-                            .ok_or(EthApiError::InvalidBlockRange)?;
-                        rewards.push(
-                            calculate_reward_percentiles_for_block(
-                                percentiles,
-                                header.gas_used(),
-                                header.base_fee_per_gas().unwrap_or_default(),
-                                block.body().transactions(),
-                                &receipts,
-                            )
-                            .unwrap_or_default(),
-                        );
+                        if header.gas_used() == 0 {
+                            // Empty blocks have no transactions, so the reward
+                            // percentiles would always be zero. Report the currently
+                            // suggested priority fee instead, the same value
+                            // `eth_maxPriorityFeePerGas` returns.
+                            let reward =
+                                self.empty_block_reward(&mut cached_empty_block_tip).await;
+                            rewards.push(vec![reward; percentiles.len()]);
+                        } else {
+                            let (block, receipts) = self.cache()
+                                .get_block_and_receipts(header.hash())
+                                .await
+                                .map_err(Self::Error::from_eth_err)?
+                                .ok_or(EthApiError::InvalidBlockRange)?;
+                            rewards.push(
+                                calculate_reward_percentiles_for_block(
+                                    percentiles,
+                                    header.gas_used(),
+                                    header.base_fee_per_gas().unwrap_or_default(),
+                                    block.body().transactions(),
+                                    &receipts,
+                                )
+                                .unwrap_or_default(),
+                            );
+                        }
                     }
                 }
 
@@ -260,6 +284,36 @@ pub trait EthFees:
         let index = (clamped_percentile / (1.0 / resolution as f64)).round() as usize;
         // Fetch the reward from the FeeHistoryEntry
         entry.rewards.get(index).copied().unwrap_or_default()
+    }
+
+    /// Returns the reward to report for empty blocks in `eth_feeHistory`.
+    ///
+    /// Empty blocks have no transactions, so their reward percentiles would always
+    /// be zero. Instead, this returns the currently suggested priority fee (the same
+    /// value `eth_maxPriorityFeePerGas` returns), resolved at most once per request
+    /// via the `cached` handle. Falls back to zero if the suggestion fails, without
+    /// caching the failure so that later empty blocks can retry.
+    fn empty_block_reward(&self, cached: &mut Option<u128>) -> impl Future<Output = u128> + Send {
+        async move {
+            if let Some(reward) = *cached {
+                return reward
+            }
+            match self.gas_oracle().suggest_tip_cap().await {
+                Ok(tip) => {
+                    let reward = tip.saturating_to::<u128>();
+                    *cached = Some(reward);
+                    reward
+                }
+                Err(err) => {
+                    debug!(
+                        target: "rpc::eth",
+                        %err,
+                        "Failed to resolve suggested priority fee for empty block rewards; reporting zero"
+                    );
+                    0
+                }
+            }
+        }
     }
 }
 
