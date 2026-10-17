@@ -407,6 +407,59 @@ async fn test_debug_trace_eip8037_gas() -> eyre::Result<()> {
 }
 
 #[tokio::test]
+async fn test_fee_history_empty_block_reward_fallback() -> eyre::Result<()> {
+    reth_tracing::init_test_tracing();
+
+    // reth-v2.8.1 migration: the original copied `test_fee_history`'s setup (a Cancun
+    // `ChainSpecBuilder` over `../assets/genesis.json`, `setup_engine` with
+    // `eth_payload_attributes`, and a `ProviderBuilder` with the first generated wallet). Upstream
+    // since rewrote `test_fee_history` to the helpers below and removed that genesis file, so
+    // this test uses the same setup.
+    let chain_spec = test_chain_spec(EthereumHardfork::Cancun);
+
+    let (mut node, wallet) = EthereumNode::test_setup(1, chain_spec).build_single().await?;
+    let provider = node.rpc_provider_with_wallet(wallet.signer(0));
+
+    // A block with a transaction, so its rewards are transaction-derived.
+    let _ = provider.send_transaction(TransactionRequest::default().to(Address::ZERO)).await?;
+    node.advance_block().await?;
+
+    // An empty block: no pending transactions, so its reward percentiles would
+    // always be zero.
+    node.advance_block().await?;
+
+    let latest_block = provider.get_block_number().await?;
+    assert_eq!(latest_block, 2);
+
+    // The empty block's rewards should equal the suggested priority fee that
+    // `eth_maxPriorityFeePerGas` returns instead of zero.
+    let expected_tip =
+        provider.client().request_noparams::<U256>("eth_maxPriorityFeePerGas").await?;
+    let expected_tip = expected_tip.saturating_to::<u128>();
+    assert_ne!(
+        expected_tip, 0,
+        "the suggestion should be nonzero in this scenario, otherwise the test cannot \
+         distinguish the fallback from zero rewards"
+    );
+
+    let fee_history = provider.get_fee_history(2, latest_block.into(), &[25.0, 50.0, 75.0]).await?;
+    let reward = fee_history.reward.expect("percentiles were requested");
+    assert_eq!(reward.len(), 2, "should return one reward row per block");
+    assert_ne!(
+        reward[0],
+        vec![0; 3],
+        "the non-empty block's rewards should come from its transaction, not the fallback"
+    );
+    assert_eq!(
+        reward[1],
+        vec![expected_tip; 3],
+        "empty block should report the suggested priority fee instead of zero"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_flashbots_validate_v3() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 

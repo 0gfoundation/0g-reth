@@ -1153,6 +1153,106 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Empty blocks in the requested range should report the suggested priority
+    /// fee (the value `eth_maxPriorityFeePerGas` returns) instead of zero rewards
+    async fn test_fee_history_empty_block_reward_fallback_to_suggested_tip() {
+        const PRIORITY_FEE: u128 = 500_000_000; // 0.5 gwei
+        const GAS_LIMIT: u64 = 1_000_000;
+        const GAS_USED: u64 = 100_000;
+        const BASE_FEE: u64 = 1_000_000_000; // 1 gwei
+        const NEWEST_BLOCK: u64 = 22;
+
+        let mock_provider = MockEthProvider::default();
+        let mut parent_hash = B256::default();
+
+        // Blocks 1..=21: a single transaction each, so the reward at any
+        // percentile is deterministic (the only transaction's tip).
+        for number in 1..NEWEST_BLOCK {
+            let header = Header {
+                number,
+                gas_limit: GAS_LIMIT,
+                gas_used: GAS_USED,
+                base_fee_per_gas: Some(BASE_FEE),
+                parent_hash,
+                ..Default::default()
+            };
+            // Key the mock store by the header's actual hash: the gas price
+            // oracle walks the chain by header hash, not by an arbitrary id.
+            let hash = header.hash_slow();
+            let transaction = TransactionSigned::new_unhashed(
+                reth_ethereum_primitives::Transaction::Eip1559(alloy_consensus::TxEip1559 {
+                    max_priority_fee_per_gas: PRIORITY_FEE,
+                    max_fee_per_gas: 1_500_000_000,
+                    ..Default::default()
+                }),
+                Signature::test_signature(),
+            );
+            mock_provider.add_block(
+                hash,
+                Block {
+                    header: header.clone(),
+                    body: BlockBody { transactions: vec![transaction], ..Default::default() },
+                },
+            );
+            mock_provider.add_receipts(
+                number,
+                vec![reth_ethereum_primitives::Receipt {
+                    cumulative_gas_used: GAS_USED,
+                    success: true,
+                    ..Default::default()
+                }],
+            );
+            parent_hash = hash;
+        }
+
+        // Newest block: empty (no transactions, no gas used).
+        let header = Header {
+            number: NEWEST_BLOCK,
+            gas_limit: GAS_LIMIT,
+            gas_used: 0,
+            base_fee_per_gas: Some(BASE_FEE),
+            parent_hash,
+            ..Default::default()
+        };
+        mock_provider.add_block(header.hash_slow(), Block { header, body: BlockBody::default() });
+        mock_provider.add_receipts(NEWEST_BLOCK, vec![]);
+
+        let eth_api = build_test_eth_api(mock_provider);
+
+        // reth-v2.8.1 migration: the original wrote `EthApiServer<_, _, _, _, _>`; upstream's
+        // `EthApiServer` gained a sixth (raw transaction) type parameter.
+        let expected_tip =
+            <EthApi<_, _> as EthApiServer<_, _, _, _, _, _>>::max_priority_fee_per_gas(&eth_api)
+                .await
+                .unwrap();
+        assert_ne!(
+            expected_tip,
+            U256::ZERO,
+            "the suggestion should be nonzero in this scenario, otherwise the test cannot \
+             distinguish the fallback from zero rewards"
+        );
+
+        let fee_history = eth_api
+            .fee_history(U64::from(2), NEWEST_BLOCK.into(), Some(vec![25., 50., 75.]))
+            .await
+            .unwrap();
+
+        let reward = fee_history.reward.expect("percentiles were requested");
+        assert_eq!(reward.len(), 2, "should return one reward row per block");
+        assert_eq!(
+            reward[0],
+            vec![PRIORITY_FEE; 3],
+            "non-empty block should keep its transaction-derived rewards"
+        );
+        assert_eq!(
+            reward[1],
+            vec![expected_tip.saturating_to::<u128>(); 3],
+            "empty block should report the suggested priority fee instead of zero"
+        );
+        assert_eq!(fee_history.oldest_block, NEWEST_BLOCK - 1, "oldest block is incorrect");
+    }
+
+    #[tokio::test]
     async fn call_allowance_respects_rpc_gas_cap() {
         use alloy_rpc_types_trace::{parity::TraceType, tracerequest::TraceCallRequest};
         use reth_rpc_eth_types::EthConfig;

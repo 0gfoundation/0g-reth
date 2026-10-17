@@ -960,9 +960,14 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + 'static> BlockReader
         id: BlockHashOrNumber,
         _transaction_kind: TransactionVariant,
     ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
-        self.block(id)?
-            .map(|block| block.try_into_recovered().map_err(ProviderError::other))
-            .transpose()
+        // reth-v2.8.1 migration: 77fd00618 replaced `Ok(None)` with this. Upstream #27275 has
+        // since implemented the same recovery as `self.block(id)?.map(|block|
+        // block.try_into_recovered().map_err(ProviderError::other)).transpose()`; the two differ
+        // only in the error. The original's `SenderRecoveryError` is kept, which its test below
+        // checks. `sealed_block_with_senders` already delegates here upstream, as in the
+        // original.
+        let Some(block) = self.block(id)? else { return Ok(None) };
+        block.seal_slow().try_recover().map(Some).map_err(|_| ProviderError::SenderRecoveryError)
     }
 
     fn sealed_block_with_senders(
@@ -1397,8 +1402,9 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync> NodePrimitivesProvider
 mod tests {
     use super::*;
     use alloy_consensus::Header;
-    use alloy_primitives::BlockHash;
-    use reth_ethereum_primitives::Receipt;
+    use alloy_primitives::{BlockHash, Signature, U256};
+    use reth_ethereum_primitives::{Block, BlockBody, Receipt, TransactionSigned};
+    use reth_primitives_traits::SignedTransaction;
 
     #[test]
     fn test_mock_provider_receipts() {
@@ -1461,5 +1467,58 @@ mod tests {
         let partial_range = provider.receipts_by_block_range(1..=1).unwrap();
         assert_eq!(partial_range.len(), 1);
         assert_eq!(partial_range[0], receipts1);
+    }
+    #[test]
+    fn test_mock_provider_recovered_block() {
+        let provider = MockEthProvider::<EthPrimitives>::new();
+
+        let header = Header { number: 1, ..Default::default() };
+        // Key the store by the header's actual hash: the mock recovers senders
+        // on read, and the recovered block reports that same hash.
+        let block_hash = header.hash_slow();
+
+        let transaction = TransactionSigned::new_unhashed(
+            reth_ethereum_primitives::Transaction::Legacy(Default::default()),
+            Signature::test_signature(),
+        );
+        let expected_signer = transaction.try_recover_unchecked().unwrap();
+        provider.add_block(
+            block_hash,
+            Block {
+                header,
+                body: BlockBody { transactions: vec![transaction], ..Default::default() },
+            },
+        );
+
+        // Blocks added via `add_block` recover their senders on read.
+        let recovered = provider
+            .recovered_block(block_hash.into(), TransactionVariant::WithHash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.header().hash_slow(), block_hash);
+        assert_eq!(recovered.senders(), &[expected_signer]);
+
+        // `sealed_block_with_senders` behaves the same.
+        let sealed =
+            provider.sealed_block_with_senders(block_hash.into(), TransactionVariant::WithHash);
+        assert_eq!(sealed.unwrap().unwrap().senders(), &[expected_signer]);
+
+        // Blocks with unrecoverable signatures error instead of returning `None`.
+        let bad_header = Header { number: 2, ..Default::default() };
+        let bad_tx = TransactionSigned::new_unhashed(
+            reth_ethereum_primitives::Transaction::Legacy(Default::default()),
+            // r = s = 0 is not a valid signature, so recovery fails.
+            Signature::new(U256::ZERO, U256::ZERO, false),
+        );
+        provider.add_block(
+            bad_header.hash_slow(),
+            Block {
+                header: bad_header,
+                body: BlockBody { transactions: vec![bad_tx], ..Default::default() },
+            },
+        );
+
+        let err = provider.recovered_block(2u64.into(), TransactionVariant::WithHash).unwrap_err();
+        assert!(matches!(err, ProviderError::SenderRecoveryError));
     }
 }

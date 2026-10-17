@@ -277,6 +277,11 @@ pub async fn fee_history_cache_new_blocks_task<St, Provider, N>(
 /// Calculates reward percentiles for transactions in a block.
 ///
 /// The results are returned as a vector of `u128` values.
+///
+/// Note: empty blocks return a zero row. The `eth_feeHistory` RPC layer overrides
+/// this with the currently suggested priority fee, so consumers reading
+/// `FeeHistoryEntry::rewards` directly should apply the same override to match
+/// RPC responses.
 pub fn calculate_reward_percentiles_for_block<T, R>(
     percentiles: &[f64],
     base_fee_per_gas: u64,
