@@ -741,13 +741,15 @@ mod rpc_compat {
             let rlp_length = self.rlp_length();
             let header = self.clone_sealed_header();
             let withdrawals = self.body().withdrawals().cloned();
+            // 0G: consensus-layer slash entries, stored per block but not part of the block hash
+            let slashed = self.body().slashed().cloned();
 
             let transactions = BlockTransactions::Hashes(transactions);
             let uncles =
                 self.body().ommers().unwrap_or(&[]).iter().map(|h| h.hash_slow()).collect();
             let header = header_builder(header, rlp_length)?;
 
-            Ok(Block { header, uncles, transactions, withdrawals })
+            Ok(Block { header, uncles, transactions, withdrawals, slashed })
         }
 
         /// Converts the block into an RPC [`Block`] with transaction hashes.
@@ -761,13 +763,13 @@ mod rpc_compat {
             let transactions = self.body().transaction_hashes_iter().copied().collect();
             let rlp_length = self.rlp_length();
             let (header, body) = self.into_sealed_block().split_sealed_header_body();
-            let BlockBody { ommers, withdrawals, .. } = body.into_ethereum_body();
+            let BlockBody { ommers, withdrawals, slashed, .. } = body.into_ethereum_body();
 
             let transactions = BlockTransactions::Hashes(transactions);
             let uncles = ommers.into_iter().map(|h| h.hash_slow()).collect();
             let header = f(header, rlp_length)?;
 
-            Ok(Block { header, uncles, transactions, withdrawals })
+            Ok(Block { header, uncles, transactions, withdrawals, slashed })
         }
 
         /// Converts the block into an RPC [`Block`] with full transaction objects.
@@ -792,7 +794,7 @@ mod rpc_compat {
 
             let (block, senders) = self.split_sealed();
             let (header, body) = block.split_sealed_header_body();
-            let BlockBody { transactions, ommers, withdrawals, .. } = body.into_ethereum_body();
+            let BlockBody { transactions, ommers, withdrawals, slashed, .. } = body.into_ethereum_body();
 
             let transactions = transactions
                 .into_iter()
@@ -815,7 +817,7 @@ mod rpc_compat {
             let uncles = ommers.into_iter().map(|h| h.hash_slow()).collect();
             let header = header_builder(header, block_length)?;
 
-            let block = Block { header, uncles, transactions, withdrawals };
+            let block = Block { header, uncles, transactions, withdrawals, slashed };
 
             Ok(block)
         }

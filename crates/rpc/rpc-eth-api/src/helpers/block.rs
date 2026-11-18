@@ -267,6 +267,7 @@ pub trait EthBlocks:
                         header,
                         transactions: BlockTransactions::Uncle,
                         withdrawals: None,
+                        slashed: None,
                     })
                 })
                 .transpose()
